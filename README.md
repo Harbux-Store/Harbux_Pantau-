@@ -1,112 +1,71 @@
 # Harbux Pantau
 
-Aplikasi web untuk **memantau penjualan Robux dan akun-akun Roblox**. Setiap pengguna mencatat akun Roblox miliknya, stok Robux di tiap akun, serta transaksi beli/jual/transfer — lalu aplikasi menghitung saldo, profit, dan laporan secara otomatis.
+Aplikasi untuk **memantau penjualan Robux dan akun-akun Roblox** kamu. Catat akun dan transaksinya, lalu Harbux menghitung sisa Robux, profit, dan laporan secara otomatis.
 
 ---
 
-## Fitur
+## Mulai Menggunakan
 
-### Ringkasan (Dashboard)
-- Profit **hari ini**, **30 hari terakhir**, dan **keseluruhan**.
-- Total stok Robux semua akun.
-- Harga beli rata-rata, harga jual rata-rata, dan **margin per R**.
-- Grafik penjualan 30 hari terakhir (hijau = untung, merah = rugi).
-- Penjualan per akun dan daftar pembeli teratas.
-- Peringatan saldo akun menipis dan transaksi yang masih *pending*.
+1. **Login** dengan username dan password yang diberikan admin.
+2. Buka menu **Akun**, lalu tambahkan akun Roblox kamu.
+3. Buka menu **Transaksi** untuk mencatat pembelian, penjualan, atau transfer Robux.
+4. Lihat hasilnya di menu **Ringkasan** dan **Laporan**.
 
-### Akun Roblox
-- Tambah akun cukup dengan **username Roblox**, **jumlah Robux**, dan **status**:
-  - 🟢 **Ready** — siap dijual
-  - 🟡 **Pending** — Robux belum masuk / tertahan
-  - 🔵 **Borrow** — sedang dipinjam
+Data setiap pengguna terpisah — kamu hanya melihat akun dan transaksi milikmu sendiri.
+
+---
+
+## Menu
+
+### Ringkasan
+Gambaran cepat usaha kamu: profit hari ini, profit 30 hari, total stok Robux, harga beli dan jual rata-rata, serta grafik penjualan.
+
+### Akun
+Tempat menyimpan akun-akun Roblox.
+
+- Klik **Tambah Akun**, isi **username Roblox**, **jumlah Robux**, dan **status**.
+- Status akun:
+  - 🟢 **Ready** — Robux siap dijual
+  - 🟡 **Pending** — Robux belum masuk / masih tertahan
+  - 🔵 **Borrow** — akun sedang dipinjam
 - Status bisa diganti langsung dari tabel.
-- Kartu ringkasan jumlah Robux per status.
-- Edit dan hapus akun (hapus ada di dalam form Edit).
+- Untuk mengubah atau menghapus akun, klik **Edit**.
 
 ### Transaksi
-- Tipe transaksi: **Topup** (beli Robux), **Penjualan**, dan **Lain** (pengeluaran).
-- **Transfer antar akun** milik sendiri.
-- Form tampil sebagai **popup** (di HP muncul dari bawah).
-- Filter berdasarkan tipe, akun, status, dan rentang tanggal.
-- Input angka format Indonesia — `10.000` terbaca sepuluh ribu.
-- Penjualan dan transfer **ditolak bila saldo akun tidak cukup**.
+Catatan semua keluar-masuk Robux.
+
+- **+ Transaksi baru** untuk mencatat:
+  - **Topup** — saat kamu membeli Robux
+  - **Penjualan** — saat kamu menjual Robux ke pembeli
+  - **Lain** — pengeluaran lain
+- **Transfer antar akun** untuk memindahkan Robux dari satu akun ke akun lain.
+- Untuk mengubah atau menghapus transaksi, klik **Edit**.
+
+Sisa Robux di setiap akun akan **berubah otomatis** sesuai transaksi yang dicatat.
 
 ### Laporan
-- Ringkasan pendapatan, modal, dan profit untuk rentang tanggal tertentu.
-- **Ekspor CSV** untuk dibuka di Excel / Google Sheets.
+Pilih rentang tanggal untuk melihat pendapatan dan profit pada periode itu. Klik **Ekspor CSV** untuk membuka datanya di Excel atau Google Sheets.
 
-### Pengguna
-- Dua peran: **Admin** dan **Staff**.
-- **Data tiap pengguna terpisah** — pengguna hanya melihat akun & transaksi miliknya.
-- Admin dapat melihat data semua pengguna, menambah pengguna, dan menghapus pengguna.
-
-### Tampilan
-- **Mode terang** bergaya situs Roblox dan **mode gelap** hitam pekat — bisa diganti dari sidebar.
-- Responsif untuk HP (sidebar berubah menjadi menu).
+### Pengguna *(khusus admin)*
+Admin dapat menambah dan menghapus pengguna.
 
 ---
 
-## Cara Menghitung
+## Tips
 
-**Saldo akun**
-```
-Saldo = Saldo awal + Topup + Transfer masuk − Penjualan − Transfer keluar
-```
-Hanya transaksi berstatus *selesai* yang dihitung.
-
-**Profit**
-```
-Profit = Pendapatan − (HPP + Biaya)
-HPP    = Robux terjual × Harga beli rata-rata
-```
-- **Pendapatan**: total uang dari penjualan.
-- **HPP (Harga Pokok Penjualan)**: modal dari Robux yang *sudah terjual*. Uang topup tidak langsung dianggap rugi karena masih berupa stok Robux.
-- **Biaya**: pengeluaran lain (transaksi tipe *Lain*).
-
-**Margin per R**
-```
-Margin per R = Harga jual rata-rata − Harga beli rata-rata
-```
-Keuntungan rata-rata untuk setiap 1 Robux yang terjual.
+- **Mengetik angka** — gunakan titik sebagai pemisah ribuan. `10.000` dibaca sepuluh ribu.
+- **Penjualan ditolak?** Artinya sisa Robux di akun tersebut tidak cukup.
+- **Status transaksi *Pending*** tidak dihitung ke saldo sampai diubah menjadi *Selesai*.
+- **Mode terang / gelap** bisa diganti dari tombol di sidebar.
 
 ---
 
-## Teknologi
+## Arti Angka di Ringkasan
 
-| Bagian | Teknologi |
+| Istilah | Artinya |
 |---|---|
-| Backend (API) | Go, SQLite, JWT (login via cookie), bcrypt |
-| Frontend (Web) | Next.js, React, TypeScript, Tailwind CSS |
-
-### Struktur Folder
-```
-Harbux/
-├── api/                 # Backend Go
-│   ├── main.go          # Seluruh API: login, akun, transaksi, ringkasan, laporan
-│   ├── main_test.go     # Pengujian otomatis
-│   └── data/            # Database SQLite (dibuat otomatis)
-└── web/                 # Frontend Next.js
-    └── src/
-        ├── app/
-        │   ├── login/           # Halaman login
-        │   └── (app)/
-        │       ├── dashboard/   # Ringkasan
-        │       ├── transactions/# Transaksi
-        │       ├── accounts/    # Akun Roblox
-        │       ├── reports/     # Laporan
-        │       └── users/       # Pengguna (khusus admin)
-        ├── components/          # Ikon, popup, input angka
-        └── lib/api.ts           # Tipe data & fungsi pemanggil API
-```
-
----
-
-## Hak Akses
-
-| Aksi | Staff | Admin |
-|---|---|---|
-| Kelola akun Roblox & transaksi | ✅ milik sendiri | ✅ semua |
-| Lihat ringkasan & laporan | ✅ milik sendiri | ✅ semua |
-| Kelola pengguna | ❌ | ✅ |
-
-Semua pembatasan dicek di server, bukan hanya di tampilan.
+| **Profit** | Keuntungan bersih dari penjualan (hijau = untung, merah = rugi) |
+| **Harga beli rata-rata** | Rata-rata modal kamu untuk 1 Robux |
+| **Harga jual rata-rata** | Rata-rata harga kamu menjual 1 Robux |
+| **Margin per R** | Selisih harga jual dan harga beli untuk setiap 1 Robux |
+| **HPP + biaya** | Modal dari Robux yang sudah terjual, ditambah pengeluaran lain |
