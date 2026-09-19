@@ -16,6 +16,9 @@
 .env.*
 !.env.example
 
+# panduan lokal agent (tidak untuk dibagikan)
+/AGENTS.md
+
 # misc
 .DS_Store
 npm-debug.log*
