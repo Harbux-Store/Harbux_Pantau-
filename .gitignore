@@ -1,0 +1,21 @@
+# Go
+/api/data/
+/api/cashflow-server.exe
+/api/*.exe
+/api/*.exe~
+
+# Node
+/web/node_modules/
+
+# Next.js
+/web/.next/
+/web/out/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# misc
+.DS_Store
+npm-debug.log*
