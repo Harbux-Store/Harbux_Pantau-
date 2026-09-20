@@ -13,6 +13,8 @@ Aplikasi untuk **memantau penjualan Robux dan akun-akun Roblox** kamu. Catat aku
 
 Data setiap pengguna terpisah — kamu hanya melihat akun dan transaksi milikmu sendiri.
 
+> Mau memasang Harbux di server sendiri? Lihat [panduan deploy](deploy/README.md).
+
 ---
 
 ## Menu
