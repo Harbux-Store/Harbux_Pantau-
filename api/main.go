@@ -257,12 +257,15 @@ type loginGuard struct {
 }
 
 const (
-	maxLoginFail  = 5
-	loginFailSpan = 15 * time.Minute
+	maxLoginFail = 5
+	// Ambang untuk kunci per-username dibuat lebih longgar supaya orang iseng tidak
+	// bisa mengunci akun orang lain hanya dengan sengaja salah password 5 kali.
+	maxLoginFailUser = 25
+	loginFailSpan    = 15 * time.Minute
 )
 
-// allow melaporkan apakah key (IP+username) masih boleh mencoba login.
-func (g *loginGuard) allow(key string) bool {
+// allow melaporkan apakah key masih boleh mencoba login.
+func (g *loginGuard) allow(key string, max int) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := time.Now()
@@ -273,7 +276,7 @@ func (g *loginGuard) allow(key string) bool {
 		}
 	}
 	g.fail[key] = keep
-	return len(keep) < maxLoginFail
+	return len(keep) < max
 }
 
 func (g *loginGuard) fail_(key string) {
@@ -295,7 +298,9 @@ type app struct {
 	// writeMu menyerialkan cek-saldo + insert agar dua request bersamaan tidak membuat saldo minus.
 	writeMu      sync.Mutex
 	secureCookie bool
-	guard        loginGuard
+	// trustProxy: percayai header X-Forwarded-For (hanya benar bila di belakang Nginx).
+	trustProxy bool
+	guard      loginGuard
 }
 
 func main() {
@@ -331,9 +336,20 @@ func main() {
 		log.Fatal(err)
 	}
 	a := newApp(db, useMySQL, secret, os.Getenv("HARBUX_SECURE_COOKIE") == "1")
-	port := getenv("PORT", "8080")
-	log.Println("API di http://localhost:" + port)
-	log.Fatal(http.ListenAndServe(":"+port, a.routes()))
+	a.trustProxy = os.Getenv("HARBUX_TRUST_PROXY") == "1"
+
+	// Alamat dengar. Default 127.0.0.1 supaya API TIDAK terbuka langsung ke internet;
+	// yang menghadap publik cukup Nginx. Isi HARBUX_ADDR bila perlu menimpanya
+	// (mis. "0.0.0.0:8080" di dalam container).
+	addr := os.Getenv("HARBUX_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:" + getenv("PORT", "8080")
+	}
+	if !a.trustProxy {
+		log.Println("HARBUX_TRUST_PROXY tidak aktif; X-Forwarded-For diabaikan")
+	}
+	log.Println("API mendengar di", addr)
+	log.Fatal(http.ListenAndServe(addr, a.routes()))
 }
 
 // loadSecret mengambil kunci penanda-tangan login dari env HARBUX_SECRET.
@@ -530,32 +546,52 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	key := clientIP(r) + "|" + strings.ToLower(req.Username)
-	if !a.guard.allow(key) {
-		writeErr(w, http.StatusTooManyRequests, "terlalu banyak percobaan login; coba lagi dalam 15 menit")
-		return
+	// Dua kunci: per-IP+username, dan per-username saja. Kunci kedua penting karena
+	// penyerang bisa berganti-ganti IP (atau memalsukannya bila API terekspos langsung),
+	// sehingga pembatasan berbasis IP saja tidak menggigit.
+	uname := strings.ToLower(strings.TrimSpace(req.Username))
+	keys := map[string]int{
+		a.clientIP(r) + "|" + uname: maxLoginFail,
+		"user|" + uname:             maxLoginFailUser,
+	}
+	for k, max := range keys {
+		if !a.guard.allow(k, max) {
+			writeErr(w, http.StatusTooManyRequests, "terlalu banyak percobaan login; coba lagi dalam 15 menit")
+			return
+		}
 	}
 	var u user
 	var hash string
 	err := a.db.QueryRow("SELECT id, username, pass_hash, role FROM users WHERE username = ?", req.Username).
 		Scan(&u.ID, &u.Username, &hash, &u.Role)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		a.guard.fail_(key)
+		for k := range keys {
+			a.guard.fail_(k)
+		}
 		writeErr(w, http.StatusUnauthorized, "username/password salah")
 		return
 	}
-	a.guard.reset(key)
+	for k := range keys {
+		a.guard.reset(k)
+	}
 	a.setToken(w, u)
 	writeJSON(w, http.StatusOK, u)
 }
 
-// clientIP mengambil IP pengguna, termasuk bila di belakang reverse proxy (Nginx).
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.IndexByte(v, ','); i > 0 {
-			return strings.TrimSpace(v[:i])
+// clientIP mengambil IP pengguna.
+//
+// X-Forwarded-For hanya dipercaya bila HARBUX_TRUST_PROXY=1, yaitu ketika API
+// benar-benar berada di belakang reverse proxy (Nginx) yang menulis ulang header
+// itu. Tanpa penjagaan ini siapa pun bisa mengarang IP lewat header dan lolos
+// dari pembatasan percobaan login.
+func (a *app) clientIP(r *http.Request) string {
+	if a.trustProxy {
+		if v := r.Header.Get("X-Forwarded-For"); v != "" {
+			if i := strings.IndexByte(v, ','); i > 0 {
+				return strings.TrimSpace(v[:i])
+			}
+			return strings.TrimSpace(v)
 		}
-		return strings.TrimSpace(v)
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
