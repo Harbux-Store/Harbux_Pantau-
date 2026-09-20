@@ -1,0 +1,25 @@
+[Unit]
+Description=Harbux API (Go)
+Documentation=https://github.com/Harbux-Store/Harbux_Pantau-
+After=network-online.target mariadb.service mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=harbux
+Group=harbux
+WorkingDirectory=/opt/harbux/api
+EnvironmentFile=/opt/harbux/api/.env
+ExecStart=/opt/harbux/api/harbux-api
+Restart=always
+RestartSec=3
+
+# Pengamanan dasar: proses hanya boleh menulis ke folder datanya sendiri.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/harbux/api/data
+
+[Install]
+WantedBy=multi-user.target
