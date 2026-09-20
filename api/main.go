@@ -16,42 +16,88 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
 
-const schema = `
-CREATE TABLE IF NOT EXISTS users (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	username TEXT NOT NULL UNIQUE,
-	pass_hash TEXT NOT NULL,
-	role TEXT NOT NULL DEFAULT 'staff'
-);
-CREATE TABLE IF NOT EXISTS accounts (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	name TEXT NOT NULL,
-	username_roblox TEXT NOT NULL DEFAULT '',
-	owner TEXT NOT NULL DEFAULT '',
-	initial_balance_robux INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS transactions (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	type TEXT NOT NULL,
-	account_id INTEGER,
-	from_account_id INTEGER,
-	to_account_id INTEGER,
-	counterpart TEXT NOT NULL DEFAULT '',
-	robux_amount INTEGER NOT NULL DEFAULT 0,
-	rate_idr INTEGER NOT NULL DEFAULT 0,
-	fee_idr INTEGER NOT NULL DEFAULT 0,
-	idr_total INTEGER NOT NULL DEFAULT 0,
-	status TEXT NOT NULL DEFAULT 'selesai',
-	note TEXT NOT NULL DEFAULT '',
-	created_at TEXT NOT NULL,
-	created_by INTEGER NOT NULL
-);
-`
+// schemaFor mengembalikan statement CREATE TABLE per dialek (dijalankan satu per satu,
+// karena driver MySQL menolak beberapa statement dalam satu Exec).
+func schemaFor(mysql bool) []string {
+	if mysql {
+		return []string{
+			`CREATE TABLE IF NOT EXISTS users (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				username VARCHAR(64) NOT NULL UNIQUE,
+				pass_hash VARCHAR(255) NOT NULL,
+				role VARCHAR(16) NOT NULL DEFAULT 'staff'
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+			`CREATE TABLE IF NOT EXISTS accounts (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(128) NOT NULL,
+				username_roblox VARCHAR(128) NOT NULL DEFAULT '',
+				owner VARCHAR(128) NOT NULL DEFAULT '',
+				initial_balance_robux BIGINT NOT NULL DEFAULT 0,
+				active TINYINT NOT NULL DEFAULT 1,
+				stock_status VARCHAR(16) NOT NULL DEFAULT 'ready',
+				user_id INT NULL,
+				INDEX idx_accounts_user (user_id)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+			`CREATE TABLE IF NOT EXISTS transactions (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				type VARCHAR(16) NOT NULL,
+				account_id INT NULL,
+				from_account_id INT NULL,
+				to_account_id INT NULL,
+				counterpart VARCHAR(128) NOT NULL DEFAULT '',
+				robux_amount BIGINT NOT NULL DEFAULT 0,
+				rate_idr BIGINT NOT NULL DEFAULT 0,
+				fee_idr BIGINT NOT NULL DEFAULT 0,
+				idr_total BIGINT NOT NULL DEFAULT 0,
+				status VARCHAR(16) NOT NULL DEFAULT 'selesai',
+				note VARCHAR(255) NOT NULL DEFAULT '',
+				created_at VARCHAR(16) NOT NULL,
+				created_by INT NOT NULL,
+				INDEX idx_tx_account (account_id),
+				INDEX idx_tx_from (from_account_id),
+				INDEX idx_tx_to (to_account_id),
+				INDEX idx_tx_date (created_at)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		}
+	}
+	return []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL UNIQUE,
+			pass_hash TEXT NOT NULL,
+			role TEXT NOT NULL DEFAULT 'staff'
+		)`,
+		`CREATE TABLE IF NOT EXISTS accounts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			username_roblox TEXT NOT NULL DEFAULT '',
+			owner TEXT NOT NULL DEFAULT '',
+			initial_balance_robux INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS transactions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			type TEXT NOT NULL,
+			account_id INTEGER,
+			from_account_id INTEGER,
+			to_account_id INTEGER,
+			counterpart TEXT NOT NULL DEFAULT '',
+			robux_amount INTEGER NOT NULL DEFAULT 0,
+			rate_idr INTEGER NOT NULL DEFAULT 0,
+			fee_idr INTEGER NOT NULL DEFAULT 0,
+			idr_total INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'selesai',
+			note TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			created_by INTEGER NOT NULL
+		)`,
+	}
+}
 
 // balanceExpr: perubahan saldo R$ sebuah transaksi t terhadap akun a.
 // Hanya topup yang menambah; penjualan & transfer keluar mengurangi; fee/lain tidak menyentuh R$.
@@ -63,41 +109,52 @@ const balanceExpr = `CASE
 	ELSE 0 END`
 
 const accountSelect = `SELECT a.id, a.name, a.username_roblox, a.owner, a.initial_balance_robux, a.active, a.stock_status,
-	a.initial_balance_robux + COALESCE((SELECT SUM(` + balanceExpr + `)
+	a.initial_balance_robux + CAST(COALESCE((SELECT SUM(` + balanceExpr + `)
 		FROM transactions t WHERE t.status = 'selesai'
-		AND (t.account_id = a.id OR t.from_account_id = a.id OR t.to_account_id = a.id)), 0) AS bal
+		AND (t.account_id = a.id OR t.from_account_id = a.id OR t.to_account_id = a.id)), 0) AS SIGNED) AS bal
 	FROM accounts a`
 
 const timeLayout = "2006-01-02 15:04"
 
-func migrate(db *sql.DB) error {
-	if _, err := db.Exec(schema); err != nil {
-		return err
-	}
+// hasColumn memeriksa keberadaan kolom (SQLite & MySQL punya cara berbeda).
+func hasColumn(db *sql.DB, mysql bool, table, col string) bool {
 	var n int
-	db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name = 'active'").Scan(&n)
-	if n == 0 {
-		if _, err := db.Exec("ALTER TABLE accounts ADD COLUMN active INTEGER NOT NULL DEFAULT 1"); err != nil {
+	if mysql {
+		db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`, table, col).Scan(&n)
+	} else {
+		db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, col).Scan(&n)
+	}
+	return n > 0
+}
+
+func migrate(db *sql.DB, mysql bool) error {
+	for _, stmt := range schemaFor(mysql) {
+		if _, err := db.Exec(stmt); err != nil {
 			return err
 		}
 	}
-	db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name = 'user_id'").Scan(&n)
-	if n == 0 {
-		if _, err := db.Exec("ALTER TABLE accounts ADD COLUMN user_id INTEGER"); err != nil {
-			return err
-		}
-	}
-	db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name = 'stock_status'").Scan(&n)
-	if n == 0 {
-		if _, err := db.Exec("ALTER TABLE accounts ADD COLUMN stock_status TEXT NOT NULL DEFAULT 'ready'"); err != nil {
-			return err
+	// kolom tambahan untuk database lama (skema MySQL sudah menyertakannya sejak awal)
+	for col, ddl := range map[string]string{
+		"active":       "ALTER TABLE accounts ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
+		"user_id":      "ALTER TABLE accounts ADD COLUMN user_id INTEGER",
+		"stock_status": "ALTER TABLE accounts ADD COLUMN stock_status TEXT NOT NULL DEFAULT 'ready'",
+	} {
+		if !hasColumn(db, mysql, "accounts", col) {
+			if _, err := db.Exec(ddl); err != nil {
+				return err
+			}
 		}
 	}
 	// akun lama tanpa pemilik -> milik admin pertama
-	db.Exec(`UPDATE accounts SET user_id = (SELECT MIN(id) FROM users WHERE role = 'admin') WHERE user_id IS NULL`)
+	db.Exec(`UPDATE accounts SET user_id = (SELECT id FROM (SELECT MIN(id) id FROM users WHERE role = 'admin') x) WHERE user_id IS NULL`)
 	// samakan format tanggal lama ("2026-09-19T10:00" / "2026-09-19") ke "2026-09-19 10:00"
+	concat := "created_at || ' 00:00'"
+	if mysql {
+		concat = "CONCAT(created_at, ' 00:00')"
+	}
 	_, err := db.Exec(`UPDATE transactions SET created_at = CASE
-		WHEN length(created_at) = 10 THEN created_at || ' 00:00'
+		WHEN length(created_at) = 10 THEN ` + concat + `
 		ELSE substr(replace(created_at, 'T', ' '), 1, 16) END
 		WHERE created_at LIKE '%T%' OR length(created_at) != 16`)
 	return err
@@ -193,6 +250,7 @@ type account struct {
 
 type app struct {
 	db     *sql.DB
+	mysql  bool
 	secret []byte
 	// writeMu menyerialkan cek-saldo + insert agar dua request bersamaan tidak membuat saldo minus.
 	writeMu      sync.Mutex
@@ -200,17 +258,33 @@ type app struct {
 }
 
 func main() {
-	dbPath := getenv("HARBUX_DB", "data/cashflow.db")
-	if dir := filepath.Dir(dbPath); dir != "" {
+	// HARBUX_DSN diisi -> MySQL/MariaDB, mis.
+	//   harbux:sandi@tcp(127.0.0.1:3306)/harbux?parseTime=true&charset=utf8mb4&loc=Asia%2FJakarta
+	// Kosong -> SQLite di HARBUX_DB (praktis untuk pengembangan di laptop).
+	dsn := os.Getenv("HARBUX_DSN")
+	useMySQL := dsn != ""
+	driver, target := "sqlite", getenv("HARBUX_DB", "data/cashflow.db")
+	if useMySQL {
+		driver, target = "mysql", dsn
+	} else if dir := filepath.Dir(target); dir != "" {
 		os.MkdirAll(dir, 0o755)
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open(driver, target)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := migrate(db); err != nil {
+	if useMySQL {
+		db.SetMaxOpenConns(20)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(3 * time.Minute)
+	}
+	if err := db.Ping(); err != nil {
+		log.Fatal("gagal konek database: ", err)
+	}
+	if err := migrate(db, useMySQL); err != nil {
 		log.Fatal(err)
 	}
+	log.Println("Database:", driver)
 	secret := []byte(getenv("HARBUX_SECRET", ""))
 	if len(secret) < 32 {
 		b := make([]byte, 32)
@@ -218,7 +292,7 @@ func main() {
 		secret = b
 		log.Println("HARBUX_SECRET tidak diset; pakai secret acak (login akan expire saat restart). Set env untuk persist.")
 	}
-	a := &app{db: db, secret: secret, secureCookie: os.Getenv("HARBUX_SECURE_COOKIE") == "1"}
+	a := &app{db: db, mysql: useMySQL, secret: secret, secureCookie: os.Getenv("HARBUX_SECURE_COOKIE") == "1"}
 	port := getenv("PORT", "8080")
 	log.Println("API di http://localhost:" + port)
 	log.Fatal(http.ListenAndServe(":"+port, a.routes()))
@@ -788,7 +862,7 @@ func (a *app) currentBalance(accountID, excludeID int64) (int64, error) {
 		return bal, err
 	}
 	var delta int64
-	err = a.db.QueryRow(`SELECT COALESCE(SUM(`+balanceExpr+`), 0) FROM transactions t, accounts a
+	err = a.db.QueryRow(`SELECT CAST(COALESCE(SUM(`+balanceExpr+`), 0) AS SIGNED) FROM transactions t, accounts a
 		WHERE a.id = ? AND t.id = ? AND t.status = 'selesai'`, accountID, excludeID).Scan(&delta)
 	return bal - delta, err
 }
@@ -907,7 +981,7 @@ func (a *app) summary(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
 	scope := " AND " + txScope(u, "transactions")
 	var topupIDR, topupRobux int64
-	a.db.QueryRow(`SELECT COALESCE(SUM(idr_total),0), COALESCE(SUM(robux_amount),0)
+	a.db.QueryRow(`SELECT CAST(COALESCE(SUM(idr_total),0) AS SIGNED), CAST(COALESCE(SUM(robux_amount),0) AS SIGNED)
 		FROM transactions WHERE status = 'selesai' AND type = 'topup'`+scope).Scan(&topupIDR, &topupRobux)
 	avgBuy := 0.0
 	if topupRobux > 0 {
@@ -915,7 +989,7 @@ func (a *app) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := a.db.Query(`
-		SELECT type, COALESCE(SUM(idr_total),0), COALESCE(SUM(robux_amount),0), COUNT(*)
+		SELECT type, CAST(COALESCE(SUM(idr_total),0) AS SIGNED), CAST(COALESCE(SUM(robux_amount),0) AS SIGNED), COUNT(*)
 		FROM transactions
 		WHERE status = 'selesai' AND type != 'transfer'
 		  AND date(created_at) BETWEEN COALESCE(?, date(created_at)) AND COALESCE(?, date(created_at))`+scope+`
@@ -951,14 +1025,18 @@ func (a *app) summary(w http.ResponseWriter, r *http.Request) {
 	var pendingCount int64
 	a.db.QueryRow(`SELECT COUNT(*) FROM transactions WHERE status = 'pending'` + scope).Scan(&pendingCount)
 
+	last30, todayExpr := "date('now','localtime','-29 days')", "date('now','localtime')"
+	if a.mysql {
+		last30, todayExpr = "CURDATE() - INTERVAL 29 DAY", "CURDATE()"
+	}
 	daily := []map[string]any{}
 	dRows, err := a.db.Query(`SELECT date(created_at) d,
-		COALESCE(SUM(CASE WHEN type='penjualan' THEN idr_total END),0),
-		COALESCE(SUM(CASE WHEN type='penjualan' THEN robux_amount END),0),
-		COALESCE(SUM(CASE WHEN type IN ('fee','lain') THEN idr_total END),0)
+		CAST(COALESCE(SUM(CASE WHEN type='penjualan' THEN idr_total END),0) AS SIGNED),
+		CAST(COALESCE(SUM(CASE WHEN type='penjualan' THEN robux_amount END),0) AS SIGNED),
+		CAST(COALESCE(SUM(CASE WHEN type IN ('fee','lain') THEN idr_total END),0) AS SIGNED)
 		FROM transactions
 		WHERE status = 'selesai' AND type != 'transfer'
-		  AND date(created_at) BETWEEN COALESCE(?, date('now','localtime','-29 days')) AND COALESCE(?, date('now','localtime'))`+scope+`
+		  AND date(created_at) BETWEEN COALESCE(?, `+last30+`) AND COALESCE(?, `+todayExpr+`)`+scope+`
 		GROUP BY d ORDER BY d`, from, to)
 	if err == nil {
 		for dRows.Next() {
@@ -974,7 +1052,7 @@ func (a *app) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	perAccount := []map[string]any{}
-	pRows, err := a.db.Query(`SELECT a.name, COUNT(t.id), COALESCE(SUM(t.robux_amount),0), COALESCE(SUM(t.idr_total),0)
+	pRows, err := a.db.Query(`SELECT a.name, COUNT(t.id), CAST(COALESCE(SUM(t.robux_amount),0) AS SIGNED), CAST(COALESCE(SUM(t.idr_total),0) AS SIGNED)
 		FROM transactions t JOIN accounts a ON a.id = t.account_id
 		WHERE t.type = 'penjualan' AND t.status = 'selesai'
 		  AND date(t.created_at) BETWEEN COALESCE(?, date(t.created_at)) AND COALESCE(?, date(t.created_at))
@@ -991,7 +1069,7 @@ func (a *app) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	topBuyers := []map[string]any{}
-	bRows, err := a.db.Query(`SELECT counterpart, COUNT(*), COALESCE(SUM(robux_amount),0), COALESCE(SUM(idr_total),0)
+	bRows, err := a.db.Query(`SELECT counterpart, COUNT(*), CAST(COALESCE(SUM(robux_amount),0) AS SIGNED), CAST(COALESCE(SUM(idr_total),0) AS SIGNED)
 		FROM transactions
 		WHERE type = 'penjualan' AND status = 'selesai' AND counterpart != ''
 		  AND date(created_at) BETWEEN COALESCE(?, date(created_at)) AND COALESCE(?, date(created_at))`+scope+`

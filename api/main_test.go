@@ -20,7 +20,7 @@ func newTestApp(t *testing.T) (*httptest.Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrate(db); err != nil {
+	if err := migrate(db, false); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{db: db, secret: []byte("01234567890123456789012345678901")}
