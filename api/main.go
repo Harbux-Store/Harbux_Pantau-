@@ -379,6 +379,7 @@ func newApp(db *sql.DB, mysql bool, secret []byte, secureCookie bool) *app {
 
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /auth/setup", a.setupNeeded)
 	mux.HandleFunc("POST /auth/register", a.register)
 	mux.HandleFunc("POST /auth/login", a.login)
 	mux.HandleFunc("POST /auth/logout", a.logout)
@@ -481,6 +482,16 @@ type authReq struct {
 	Role     string `json:"role"`
 }
 
+// setupNeeded dipakai halaman login untuk tahu apakah admin pertama belum dibuat.
+func (a *app) setupNeeded(w http.ResponseWriter, r *http.Request) {
+	var n int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&n); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"setup_needed": n == 0})
+}
+
 func (a *app) register(w http.ResponseWriter, r *http.Request) {
 	var n int
 	a.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&n)
@@ -500,7 +511,10 @@ func (a *app) register(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "username sudah dipakai")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"ok": "admin pertama dibuat"})
+	var u user
+	a.db.QueryRow("SELECT id, username, role FROM users WHERE username = ?", req.Username).Scan(&u.ID, &u.Username, &u.Role)
+	a.setToken(w, u)
+	writeJSON(w, http.StatusCreated, u)
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
