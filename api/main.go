@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -248,6 +250,44 @@ type account struct {
 	InitialBalanceRobux int64  `json:"initial_balance_robux"`
 }
 
+// loginGuard membatasi percobaan login yang gagal (anti tebak-tebakan password).
+type loginGuard struct {
+	mu   sync.Mutex
+	fail map[string][]time.Time
+}
+
+const (
+	maxLoginFail  = 5
+	loginFailSpan = 15 * time.Minute
+)
+
+// allow melaporkan apakah key (IP+username) masih boleh mencoba login.
+func (g *loginGuard) allow(key string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := time.Now()
+	keep := g.fail[key][:0]
+	for _, t := range g.fail[key] {
+		if now.Sub(t) < loginFailSpan {
+			keep = append(keep, t)
+		}
+	}
+	g.fail[key] = keep
+	return len(keep) < maxLoginFail
+}
+
+func (g *loginGuard) fail_(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.fail[key] = append(g.fail[key], time.Now())
+}
+
+func (g *loginGuard) reset(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.fail, key)
+}
+
 type app struct {
 	db     *sql.DB
 	mysql  bool
@@ -255,6 +295,7 @@ type app struct {
 	// writeMu menyerialkan cek-saldo + insert agar dua request bersamaan tidak membuat saldo minus.
 	writeMu      sync.Mutex
 	secureCookie bool
+	guard        loginGuard
 }
 
 func main() {
@@ -285,17 +326,43 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Println("Database:", driver)
-	secret := []byte(getenv("HARBUX_SECRET", ""))
-	if len(secret) < 32 {
-		b := make([]byte, 32)
-		rand.Read(b)
-		secret = b
-		log.Println("HARBUX_SECRET tidak diset; pakai secret acak (login akan expire saat restart). Set env untuk persist.")
+	secret, err := loadSecret()
+	if err != nil {
+		log.Fatal(err)
 	}
-	a := &app{db: db, mysql: useMySQL, secret: secret, secureCookie: os.Getenv("HARBUX_SECURE_COOKIE") == "1"}
+	a := newApp(db, useMySQL, secret, os.Getenv("HARBUX_SECURE_COOKIE") == "1")
 	port := getenv("PORT", "8080")
 	log.Println("API di http://localhost:" + port)
 	log.Fatal(http.ListenAndServe(":"+port, a.routes()))
+}
+
+// loadSecret mengambil kunci penanda-tangan login dari env HARBUX_SECRET.
+// Bila kosong, kunci acak dibuat sekali lalu disimpan ke file (HARBUX_SECRET_FILE)
+// supaya pengguna tidak ter-logout setiap kali server di-restart.
+func loadSecret() ([]byte, error) {
+	if v := os.Getenv("HARBUX_SECRET"); v != "" {
+		if len(v) < 32 {
+			return nil, fmt.Errorf("HARBUX_SECRET terlalu pendek: minimal 32 karakter")
+		}
+		return []byte(v), nil
+	}
+	path := getenv("HARBUX_SECRET_FILE", "data/secret.key")
+	if b, err := os.ReadFile(path); err == nil && len(b) >= 32 {
+		return b, nil
+	}
+	b := make([]byte, 48)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	key := []byte(base64.RawURLEncoding.EncodeToString(b))
+	if dir := filepath.Dir(path); dir != "" {
+		os.MkdirAll(dir, 0o755)
+	}
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		return nil, fmt.Errorf("gagal menyimpan kunci login ke %s: %w", path, err)
+	}
+	log.Println("HARBUX_SECRET tidak diset; kunci acak dibuat & disimpan di", path)
+	return key, nil
 }
 
 func getenv(k, d string) string {
@@ -303,6 +370,11 @@ func getenv(k, d string) string {
 		return v
 	}
 	return d
+}
+
+func newApp(db *sql.DB, mysql bool, secret []byte, secureCookie bool) *app {
+	return &app{db: db, mysql: mysql, secret: secret, secureCookie: secureCookie,
+		guard: loginGuard{fail: map[string][]time.Time{}}}
 }
 
 func (a *app) routes() http.Handler {
@@ -420,8 +492,8 @@ func (a *app) register(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if len(req.Username) < 3 || len(req.Password) < 4 {
-		writeErr(w, http.StatusBadRequest, "username min 3 karakter, password min 4")
+	if len(req.Username) < 3 || len(req.Password) < 8 {
+		writeErr(w, http.StatusBadRequest, "username min 3 karakter, password min 8")
 		return
 	}
 	if err := a.insertUser(req.Username, req.Password, "admin"); err != nil {
@@ -436,16 +508,38 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	key := clientIP(r) + "|" + strings.ToLower(req.Username)
+	if !a.guard.allow(key) {
+		writeErr(w, http.StatusTooManyRequests, "terlalu banyak percobaan login; coba lagi dalam 15 menit")
+		return
+	}
 	var u user
 	var hash string
 	err := a.db.QueryRow("SELECT id, username, pass_hash, role FROM users WHERE username = ?", req.Username).
 		Scan(&u.ID, &u.Username, &hash, &u.Role)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		a.guard.fail_(key)
 		writeErr(w, http.StatusUnauthorized, "username/password salah")
 		return
 	}
+	a.guard.reset(key)
 	a.setToken(w, u)
 	writeJSON(w, http.StatusOK, u)
+}
+
+// clientIP mengambil IP pengguna, termasuk bila di belakang reverse proxy (Nginx).
+func clientIP(r *http.Request) string {
+	if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		if i := strings.IndexByte(v, ','); i > 0 {
+			return strings.TrimSpace(v[:i])
+		}
+		return strings.TrimSpace(v)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
@@ -493,8 +587,8 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	if req.Role != "admin" && req.Role != "staff" {
 		req.Role = "staff"
 	}
-	if len(req.Username) < 3 || len(req.Password) < 4 {
-		writeErr(w, http.StatusBadRequest, "username min 3 karakter, password min 4")
+	if len(req.Username) < 3 || len(req.Password) < 8 {
+		writeErr(w, http.StatusBadRequest, "username min 3 karakter, password min 8")
 		return
 	}
 	if err := a.insertUser(req.Username, req.Password, req.Role); err != nil {

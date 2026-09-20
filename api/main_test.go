@@ -23,7 +23,7 @@ func newTestApp(t *testing.T) (*httptest.Server, string) {
 	if err := migrate(db, false); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{db: db, secret: []byte("01234567890123456789012345678901")}
+	a := newApp(db, false, []byte("01234567890123456789012345678901"), false)
 	srv := httptest.NewServer(a.routes())
 	t.Cleanup(func() { srv.Close(); db.Close() })
 	return srv, srv.URL
@@ -198,10 +198,10 @@ func TestPerUserData(t *testing.T) {
 	_, url := newTestApp(t)
 	req(t, "POST", url+"/auth/register", "", map[string]string{"username": "admin", "password": "rahasia123"})
 	admin := login(t, url, "admin", "rahasia123")
-	req(t, "POST", url+"/api/users", admin, map[string]string{"username": "budi", "password": "budi1234", "role": "staff"})
-	req(t, "POST", url+"/api/users", admin, map[string]string{"username": "sari", "password": "sari1234", "role": "staff"})
-	budi := login(t, url, "budi", "budi1234")
-	sari := login(t, url, "sari", "sari1234")
+	req(t, "POST", url+"/api/users", admin, map[string]string{"username": "budi", "password": "budi12345", "role": "staff"})
+	req(t, "POST", url+"/api/users", admin, map[string]string{"username": "sari", "password": "sari12345", "role": "staff"})
+	budi := login(t, url, "budi", "budi12345")
+	sari := login(t, url, "sari", "sari12345")
 
 	// staff boleh menambah akun sendiri
 	code, d := req(t, "POST", url+"/api/accounts", budi, map[string]any{"name": "AkunBudi", "initial_balance_robux": 1000})
@@ -258,8 +258,8 @@ func TestPurgeAccount(t *testing.T) {
 	_, url := newTestApp(t)
 	req(t, "POST", url+"/auth/register", "", map[string]string{"username": "admin", "password": "rahasia123"})
 	admin := login(t, url, "admin", "rahasia123")
-	req(t, "POST", url+"/api/users", admin, map[string]string{"username": "budi", "password": "budi1234", "role": "staff"})
-	budi := login(t, url, "budi", "budi1234")
+	req(t, "POST", url+"/api/users", admin, map[string]string{"username": "budi", "password": "budi12345", "role": "staff"})
+	budi := login(t, url, "budi", "budi12345")
 
 	_, d := req(t, "POST", url+"/api/accounts", budi, map[string]any{"username_roblox": "a1", "initial_balance_robux": 100})
 	a1 := strconv.FormatInt(int64(d["id"].(float64)), 10)
@@ -296,8 +296,8 @@ func TestDeleteUser(t *testing.T) {
 	_, url := newTestApp(t)
 	req(t, "POST", url+"/auth/register", "", map[string]string{"username": "admin", "password": "rahasia123"})
 	admin := login(t, url, "admin", "rahasia123")
-	req(t, "POST", url+"/api/users", admin, map[string]string{"username": "budi", "password": "budi1234", "role": "staff"})
-	budi := login(t, url, "budi", "budi1234")
+	req(t, "POST", url+"/api/users", admin, map[string]string{"username": "budi", "password": "budi12345", "role": "staff"})
+	budi := login(t, url, "budi", "budi12345")
 	_, d := req(t, "POST", url+"/api/accounts", budi, map[string]any{"username_roblox": "b1", "initial_balance_robux": 100})
 	acc := int64(d["id"].(float64))
 	req(t, "POST", url+"/api/transactions", budi, map[string]any{"type": "penjualan", "account_id": acc, "robux_amount": 10, "rate_idr": 100})
@@ -323,5 +323,26 @@ func TestDeleteUser(t *testing.T) {
 	}
 	if _, d := req(t, "GET", url+"/api/summary", admin, nil); d["income"].(float64) != 0 {
 		t.Fatalf("transaksi budi masih terhitung: %v", d["income"])
+	}
+}
+
+func TestLoginRateLimit(t *testing.T) {
+	_, url := newTestApp(t)
+	req(t, "POST", url+"/auth/register", "", map[string]string{"username": "admin", "password": "rahasia123"})
+
+	// password lemah ditolak
+	admin := login(t, url, "admin", "rahasia123")
+	if code, _ := req(t, "POST", url+"/api/users", admin, map[string]string{"username": "lemah", "password": "1234"}); code != 400 {
+		t.Fatalf("password < 8 karakter harus ditolak, dapat %d", code)
+	}
+
+	for i := 0; i < maxLoginFail; i++ {
+		if code, _ := req(t, "POST", url+"/auth/login", "", map[string]string{"username": "admin", "password": "salah"}); code != 401 {
+			t.Fatalf("percobaan %d harus 401, dapat %d", i+1, code)
+		}
+	}
+	// percobaan berikutnya diblokir, bahkan dengan password benar
+	if code, _ := req(t, "POST", url+"/auth/login", "", map[string]string{"username": "admin", "password": "rahasia123"}); code != 429 {
+		t.Fatalf("percobaan ke-%d harus diblokir (429), dapat %d", maxLoginFail+1, code)
 	}
 }
