@@ -379,6 +379,14 @@ func newApp(db *sql.DB, mysql bool, secret []byte, secureCookie bool) *app {
 
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
+	// dipakai monitoring/reverse proxy untuk memastikan server & database hidup
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		if err := a.db.Ping(); err != nil {
+			writeErr(w, http.StatusServiceUnavailable, "database tidak terhubung")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
 	mux.HandleFunc("GET /auth/setup", a.setupNeeded)
 	mux.HandleFunc("POST /auth/register", a.register)
 	mux.HandleFunc("POST /auth/login", a.login)
