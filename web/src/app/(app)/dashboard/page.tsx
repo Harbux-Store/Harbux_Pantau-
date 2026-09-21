@@ -54,6 +54,72 @@ function DailyChart({ data }: { data: Summary["daily"] }) {
   );
 }
 
+// Saldo per Akun: kartu per akun, 10 per halaman.
+const PER_PAGE = 10;
+
+function AccountBalances({ accounts }: { accounts: Summary["accounts"] }) {
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(accounts.length / PER_PAGE));
+  const current = Math.min(page, pages - 1);
+  const shown = accounts.slice(current * PER_PAGE, current * PER_PAGE + PER_PAGE);
+  return (
+    <section>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="section-title">Saldo per Akun</h2>
+        <span className="text-xs text-muted">{accounts.length} akun</span>
+      </div>
+      {accounts.length === 0 ? (
+        <div className="card p-5 text-center text-sm text-muted">Belum ada akun.</div>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {shown.map((a) => (
+              <div key={a.id} className="card p-4">
+                <p className="truncate font-medium" title={a.username_roblox || "—"}>
+                  {a.username_roblox || "—"}
+                </p>
+                <div className="mt-3 flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-muted">Saldo awal</p>
+                    <p className="mt-0.5 text-sm">{rb(a.initial_balance_robux)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-muted">Saldo sekarang</p>
+                    <p className={`mt-0.5 text-lg font-semibold tracking-tight ${
+                      a.current_robux < LOW_BALANCE ? "text-warn" : "text-fg"
+                    }`}>{rb(a.current_robux)}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {pages > 1 && (
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <button
+                className="btn-ghost disabled:opacity-40"
+                onClick={() => setPage(current - 1)}
+                disabled={current === 0}
+              >
+                Sebelumnya
+              </button>
+              <span className="text-xs text-muted">
+                Halaman {current + 1} dari {pages}
+              </span>
+              <button
+                className="btn-ghost disabled:opacity-40"
+                onClick={() => setPage(current + 1)}
+                disabled={current >= pages - 1}
+              >
+                Selanjutnya
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function MiniTable({ title, head, rows }: { title: string; head: string[]; rows: (string | number)[][] }) {
   return (
     <section>
@@ -157,16 +223,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      <MiniTable
-        title="Saldo per Akun"
-        head={["Nama", "Username Roblox", "Saldo Awal", "Saldo Sekarang"]}
-        rows={summary.accounts.map((a) => [
-          a.name,
-          a.username_roblox || "—",
-          rb(a.initial_balance_robux),
-          rb(a.current_robux),
-        ])}
-      />
+      <AccountBalances accounts={summary.accounts} />
 
       <section>
         <h2 className="section-title">Transaksi Terakhir</h2>
