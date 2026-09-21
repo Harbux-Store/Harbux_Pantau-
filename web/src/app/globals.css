@@ -124,6 +124,19 @@ body {
   .tbl tbody tr {
     @apply border-t border-line transition-colors hover:bg-hover/60;
   }
+  /* Kartu ringkasan berwarna: --accent diisi lewat style inline per kartu */
+  .stat {
+    @apply relative overflow-hidden rounded-lg border p-5;
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%),
+      var(--surface);
+  }
+  .stat::before {
+    content: "";
+    @apply absolute inset-x-0 top-0 h-0.5;
+    background: var(--accent);
+  }
   .section-title {
     @apply mb-3 text-sm font-medium text-muted;
   }
