@@ -241,7 +241,8 @@ func TestPerUserData(t *testing.T) {
 		json.NewDecoder(res.Body).Decode(&list)
 		return len(list)
 	}
-	if count(budi) != 1 || count(sari) != 1 || count(admin) != 2 {
+	// admin pun hanya melihat akunnya sendiri (di sini: belum punya)
+	if count(budi) != 1 || count(sari) != 1 || count(admin) != 0 {
 		t.Fatalf("jumlah akun terlihat salah: budi=%d sari=%d admin=%d", count(budi), count(sari), count(admin))
 	}
 	_, d = req(t, "GET", url+"/api/summary", sari, nil)
@@ -249,8 +250,12 @@ func TestPerUserData(t *testing.T) {
 		t.Fatalf("sari tidak boleh melihat penjualan budi: %v", d["income"])
 	}
 	_, d = req(t, "GET", url+"/api/summary", admin, nil)
-	if d["income"].(float64) != 10000 {
-		t.Fatalf("admin harus melihat semua: %v", d["income"])
+	if d["income"].(float64) != 0 {
+		t.Fatalf("admin tidak boleh melihat penjualan budi: %v", d["income"])
+	}
+	// admin juga tidak boleh menyentuh akun milik staff
+	if code, _ := req(t, "PUT", url+"/api/accounts/"+strconv.FormatInt(budiAcc, 10), admin, map[string]any{"name": "hack"}); code != 404 {
+		t.Fatalf("admin tidak boleh edit akun budi, dapat %d", code)
 	}
 }
 

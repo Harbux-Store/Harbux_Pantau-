@@ -176,20 +176,17 @@ func normalizeTime(s string) (string, bool) {
 	return "", false
 }
 
-// accScope membatasi akun ke milik user (admin melihat semua). prefix = alias tabel ("a." atau "").
+// accScope membatasi akun ke milik user. prefix = alias tabel ("a." atau "").
+// Berlaku untuk semua peran termasuk admin: data tiap pengguna berdiri sendiri,
+// admin hanya berbeda pada hak kelola pengguna (/api/users), bukan pada data.
 // ID diambil dari token (int64), jadi aman disisipkan langsung ke SQL.
 func accScope(u *user, prefix string) string {
-	if u.Role == "admin" {
-		return "1=1"
-	}
 	return fmt.Sprintf("%suser_id = %d", prefix, u.ID)
 }
 
 // txScope membatasi transaksi ke yang menyentuh akun milik user. alias = nama/alias tabel transaksi.
+// Sama seperti accScope, admin pun ikut tersaring.
 func txScope(u *user, alias string) string {
-	if u.Role == "admin" {
-		return "1=1"
-	}
 	mine := fmt.Sprintf("(SELECT id FROM accounts WHERE user_id = %d)", u.ID)
 	return fmt.Sprintf("(%[1]s.account_id IN %[2]s OR %[1]s.from_account_id IN %[2]s OR %[1]s.to_account_id IN %[2]s)", alias, mine)
 }

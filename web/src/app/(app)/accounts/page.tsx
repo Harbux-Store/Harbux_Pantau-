@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import NumberInput from "@/components/NumberInput";
 import { api, errMsg, rb, type Account } from "@/lib/api";
 
 type Stock = Account["stock_status"];
+type Form = { username_roblox: string; robux: number; stock_status: Stock };
 
 const STATUS: Record<Stock, { label: string; tone: string; hint: string }> = {
   ready: { label: "Ready", tone: "text-ready", hint: "Siap dijual" },
@@ -13,15 +15,68 @@ const STATUS: Record<Stock, { label: string; tone: string; hint: string }> = {
 };
 const STATUS_KEYS = Object.keys(STATUS) as Stock[];
 
-const empty = { username_roblox: "", robux: 0, stock_status: "ready" as Stock };
+const empty: Form = { username_roblox: "", robux: 0, stock_status: "ready" };
+
+// Isian akun dipakai dua kali: panel "Tambah Akun" di samping daftar, dan popup "Edit Akun".
+function AccountFields({ form, setForm }: { form: Form; setForm: (f: Form) => void }) {
+  return (
+    <>
+      <label className="block space-y-2">
+        <span className="text-sm font-medium">Username Roblox</span>
+        <input
+          required
+          placeholder="contoh: irfan_rbx"
+          value={form.username_roblox}
+          onChange={(e) => setForm({ ...form, username_roblox: e.target.value })}
+          className="input h-11 text-base"
+        />
+      </label>
+
+      <label className="block space-y-2">
+        <span className="text-sm font-medium">Jumlah Robux</span>
+        <div className="relative">
+          <NumberInput
+            placeholder="contoh: 10.000"
+            value={form.robux}
+            onValue={(n) => setForm({ ...form, robux: n })}
+            className="input h-11 pr-12 text-base"
+          />
+          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted">R</span>
+        </div>
+      </label>
+
+      <div className="space-y-2">
+        <span className="text-sm font-medium">Status</span>
+        <div className="grid grid-cols-3 gap-2">
+          {STATUS_KEYS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setForm({ ...form, stock_status: s })}
+              className={`h-11 rounded-md border text-sm font-medium transition-colors ${
+                form.stock_status === s ? `border-fg bg-hover ${STATUS[s].tone}` : "border-line text-muted hover:text-fg"
+              }`}
+            >
+              {STATUS[s].label}
+            </button>
+          ))}
+        </div>
+        <p className="text-sm text-muted">{STATUS[form.stock_status].hint}</p>
+      </div>
+    </>
+  );
+}
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState<Form>(empty);
   const [editing, setEditing] = useState<Account | null>(null);
+  const [editForm, setEditForm] = useState<Form>(empty);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
+  const [editError, setEditError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
 
   const load = async () => setAccounts(await api<Account[]>("/api/accounts?all=1"));
   useEffect(() => {
@@ -30,7 +85,7 @@ export default function AccountsPage() {
 
   // Kirim data akun lengkap ke server. "Jumlah Robux" yang diisi user adalah saldo SEKARANG,
   // jadi saldo awal disesuaikan supaya riwayat transaksi tetap dihitung.
-  const save = (a: Account | null, patch: { username_roblox: string; robux: number; stock_status: Stock; active?: boolean }) => {
+  const save = (a: Account | null, patch: Form & { active?: boolean }) => {
     const moved = a ? a.current_robux - a.initial_balance_robux : 0;
     const body = {
       name: "",
@@ -50,14 +105,29 @@ export default function AccountsPage() {
     setBusy(true);
     setError("");
     try {
-      await save(editing, { username_roblox: form.username_roblox, robux: form.robux, stock_status: form.stock_status });
+      await save(null, form);
       setForm(empty);
-      setEditing(null);
       await load();
     } catch (e) {
       setError(errMsg(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const submitEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editing) return;
+    setEditBusy(true);
+    setEditError("");
+    try {
+      await save(editing, editForm);
+      setEditing(null);
+      await load();
+    } catch (e) {
+      setEditError(errMsg(e));
+    } finally {
+      setEditBusy(false);
     }
   };
 
@@ -76,18 +146,15 @@ export default function AccountsPage() {
 
   const remove = (a: Account) => {
     const name = a.username_roblox || a.name;
-    if (!confirm(`Hapus permanen akun "${name}"?
-
-Semua transaksi akun ini ikut terhapus dan tidak bisa dikembalikan.`)) return;
+    if (!confirm(`Hapus permanen akun "${name}"?\n\nSemua transaksi akun ini ikut terhapus dan tidak bisa dikembalikan.`)) return;
     setEditing(null);
-    setForm(empty);
     run(() => api(`/api/accounts/${a.id}?permanent=1`, { method: "DELETE" }));
   };
 
   const startEdit = (a: Account) => {
+    setEditError("");
     setEditing(a);
-    setForm({ username_roblox: a.username_roblox || a.name, robux: a.current_robux, stock_status: a.stock_status });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setEditForm({ username_roblox: a.username_roblox || a.name, robux: a.current_robux, stock_status: a.stock_status });
   };
 
   const active = accounts.filter((a) => a.active);
@@ -145,7 +212,7 @@ Semua transaksi akun ini ikut terhapus dan tidak bisa dikembalikan.`)) return;
                   </tr>
                 )}
                 {shown.map((a) => (
-                  <tr key={a.id} className={editing?.id === a.id ? "bg-hover" : ""}>
+                  <tr key={a.id}>
                     <td className="px-6 py-4 font-medium">{a.username_roblox || a.name}</td>
                     <td className="px-6 py-4 text-right text-lg font-semibold tabular-nums">{rb(a.current_robux)}</td>
                     <td className="px-6 py-4">
@@ -169,68 +236,39 @@ Semua transaksi akun ini ikut terhapus dan tidak bisa dikembalikan.`)) return;
           </div>
         </div>
 
-        {/* form */}
+        {/* form tambah */}
         <form onSubmit={submit} className="card h-fit space-y-5 p-6">
           <div>
-            <h2 className="text-lg font-semibold">{editing ? "Edit Akun" : "Tambah Akun"}</h2>
-            <p className="text-sm text-muted">{editing ? editing.username_roblox || editing.name : "Masukkan akun Roblox baru"}</p>
+            <h2 className="text-lg font-semibold">Tambah Akun</h2>
+            <p className="text-sm text-muted">Masukkan akun Roblox baru</p>
           </div>
 
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">Username Roblox</span>
-            <input
-              required
-              placeholder="contoh: irfan_rbx"
-              value={form.username_roblox}
-              onChange={(e) => setForm({ ...form, username_roblox: e.target.value })}
-              className="input h-11 text-base"
-            />
-          </label>
-
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">Jumlah Robux</span>
-            <div className="relative">
-              <NumberInput
-                placeholder="contoh: 10.000"
-                value={form.robux}
-                onValue={(n) => setForm({ ...form, robux: n })}
-                className="input h-11 pr-12 text-base"
-              />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted">R</span>
-            </div>
-          </label>
-
-          <div className="space-y-2">
-            <span className="text-sm font-medium">Status</span>
-            <div className="grid grid-cols-3 gap-2">
-              {STATUS_KEYS.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setForm({ ...form, stock_status: s })}
-                  className={`h-11 rounded-md border text-sm font-medium transition-colors ${
-                    form.stock_status === s ? `border-fg bg-hover ${STATUS[s].tone}` : "border-line text-muted hover:text-fg"
-                  }`}
-                >
-                  {STATUS[s].label}
-                </button>
-              ))}
-            </div>
-            <p className="text-sm text-muted">{STATUS[form.stock_status].hint}</p>
-          </div>
+          <AccountFields form={form} setForm={setForm} />
 
           {error && <p className="text-sm text-neg">{error}</p>}
-          <div className="flex gap-2 pt-1">
-            <button disabled={busy} className="btn-primary h-11 flex-1 text-base">
-              {busy ? "Menyimpan…" : editing ? "Simpan" : "Tambah Akun"}
-            </button>
-            {editing && (
-              <button type="button" onClick={() => { setEditing(null); setForm(empty); }} className="btn-ghost h-11 text-base">
+          <button disabled={busy} className="btn-primary h-11 w-full text-base">
+            {busy ? "Menyimpan…" : "Tambah Akun"}
+          </button>
+        </form>
+      </div>
+
+      {/* popup edit */}
+      <Modal open={!!editing} title="Edit Akun" onClose={() => setEditing(null)}>
+        {editing && (
+          <form onSubmit={submitEdit} className="space-y-5">
+            <p className="-mt-2 text-sm text-muted">{editing.username_roblox || editing.name}</p>
+
+            <AccountFields form={editForm} setForm={setEditForm} />
+
+            {editError && <p className="text-sm text-neg">{editError}</p>}
+            <div className="flex gap-2 pt-1">
+              <button disabled={editBusy} className="btn-primary h-11 flex-1 text-base">
+                {editBusy ? "Menyimpan…" : "Simpan"}
+              </button>
+              <button type="button" onClick={() => setEditing(null)} className="btn-ghost h-11 text-base">
                 Batal
               </button>
-            )}
-          </div>
-          {editing && (
+            </div>
             <div className="border-t border-line pt-5">
               <button
                 type="button"
@@ -241,9 +279,9 @@ Semua transaksi akun ini ikut terhapus dan tidak bisa dikembalikan.`)) return;
               </button>
               <p className="mt-2 text-center text-xs text-muted">Transaksi akun ini ikut terhapus permanen</p>
             </div>
-          )}
-        </form>
-      </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }
