@@ -61,6 +61,20 @@ const TYPE_LABEL: Record<string, string> = {
   transfer: "Transfer",
 };
 export const txTypeLabel = (t: string) => TYPE_LABEL[t] || t;
+
+// Arah dana per tipe transaksi: penjualan menambah kas (+),
+// topup/fee/lain mengurangi kas (−), transfer hanya memindah Robux (netral).
+export const txSign = (type: string) => (type === "penjualan" ? 1 : type === "transfer" ? 0 : -1);
+export const signedIdr = (type: string, total: number) => {
+  const s = txSign(type);
+  if (!total || s === 0) return "—";
+  return `${s > 0 ? "+" : "−"}${idr(Math.abs(total))}`;
+};
+export const signedClass = (type: string, total: number) => {
+  const s = txSign(type);
+  if (!total || s === 0) return "text-muted";
+  return s > 0 ? "text-pos" : "text-neg";
+};
 // Pakai waktu lokal (WIB), bukan UTC — toISOString() membuat tanggal mundur sebelum jam 07:00.
 const pad = (n: number) => String(n).padStart(2, "0");
 export const today = () => {

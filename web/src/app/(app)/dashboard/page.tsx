@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, errMsg, idr, LOW_BALANCE, rb, txTypeLabel, today, type Summary, type Tx } from "@/lib/api";
+import { api, errMsg, idr, LOW_BALANCE, rb, signedClass, signedIdr, txTypeLabel, today, type Summary, type Tx } from "@/lib/api";
 
 function Card({ label, value, sub, tone = "text-fg" }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
@@ -251,7 +251,7 @@ export default function DashboardPage() {
                   <td className="px-4 py-2.5">{txTypeLabel(t.type)}</td>
                   <td className="px-4 py-2.5">{t.account_name || "—"}</td>
                   <td className="px-4 py-2.5 text-right">{t.robux_amount ? rb(t.robux_amount) : "—"}</td>
-                  <td className="px-4 py-2.5 text-right">{t.idr_total ? idr(t.idr_total) : "—"}</td>
+                  <td className={`px-4 py-2.5 text-right tabular-nums ${signedClass(t.type, t.idr_total)}`}>{signedIdr(t.type, t.idr_total)}</td>
                   <td className="px-4 py-2.5">
                     <span className={`badge ${
                       t.status === "selesai" ? "text-pos" : t.status === "pending" ? "text-warn" : "text-muted"
