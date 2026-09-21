@@ -102,7 +102,7 @@ func schemaFor(mysql bool) []string {
 }
 
 // balanceExpr: perubahan saldo R$ sebuah transaksi t terhadap akun a.
-// Hanya topup yang menambah; penjualan & transfer keluar mengurangi; fee/lain tidak menyentuh R$.
+// Hanya topup yang menambah; penjualan & transfer keluar mengurangi; fee/lain/subscribe tidak menyentuh R$.
 const balanceExpr = `CASE
 	WHEN t.type = 'topup' AND t.account_id = a.id THEN t.robux_amount
 	WHEN t.type = 'penjualan' AND t.account_id = a.id THEN -t.robux_amount
@@ -937,7 +937,7 @@ type txReq struct {
 // supaya transaksi lama tidak ikut dihitung saat cek saldo penjualan.
 func (a *app) validateTx(u *user, req *txReq, excludeID int64) string {
 	if !validType(req.Type) {
-		return "tipe tidak valid (topup/penjualan/fee/lain)"
+		return "tipe tidak valid (topup/penjualan/fee/lain/subscribe)"
 	}
 	if req.AccountID == nil {
 		return "account_id wajib"
@@ -947,6 +947,15 @@ func (a *app) validateTx(u *user, req *txReq, excludeID int64) string {
 	}
 	if (req.Type == "topup" || req.Type == "penjualan") && req.RobuxAmount == 0 {
 		return "jumlah robux wajib diisi untuk topup/penjualan"
+	}
+	// Subscribe = biaya langganan akun (mis. Roblox Premium): murni pengeluaran IDR,
+	// tidak menambah/mengurangi saldo R$ akun.
+	if req.Type == "subscribe" {
+		req.RobuxAmount = 0
+		req.RateIDR = 0
+		if req.FeeIDR == 0 {
+			return "biaya langganan wajib diisi"
+		}
 	}
 	if req.Status == "" {
 		req.Status = "selesai"
@@ -1122,7 +1131,7 @@ func (a *app) deleteTransaction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "dihapus"})
 }
 
-// summary: profit = pendapatan - HPP (R$ terjual × harga beli rata-rata) - biaya (fee/lain).
+// summary: profit = pendapatan - HPP (R$ terjual × harga beli rata-rata) - biaya (fee/lain/subscribe).
 // Harga beli rata-rata dihitung dari seluruh topup selesai (tidak tergantung periode) supaya
 // membeli stok di satu hari tidak terbaca sebagai rugi.
 func (a *app) summary(w http.ResponseWriter, r *http.Request) {
@@ -1160,7 +1169,7 @@ func (a *app) summary(w http.ResponseWriter, r *http.Request) {
 		case "topup":
 			topupSpent += idr
 			robuxBought += rb
-		case "fee", "lain":
+		case "fee", "lain", "subscribe":
 			expenses += idr
 		}
 	}
@@ -1182,7 +1191,7 @@ func (a *app) summary(w http.ResponseWriter, r *http.Request) {
 	dRows, err := a.db.Query(`SELECT date(created_at) d,
 		CAST(COALESCE(SUM(CASE WHEN type='penjualan' THEN idr_total END),0) AS SIGNED),
 		CAST(COALESCE(SUM(CASE WHEN type='penjualan' THEN robux_amount END),0) AS SIGNED),
-		CAST(COALESCE(SUM(CASE WHEN type IN ('fee','lain') THEN idr_total END),0) AS SIGNED)
+		CAST(COALESCE(SUM(CASE WHEN type IN ('fee','lain','subscribe') THEN idr_total END),0) AS SIGNED)
 		FROM transactions
 		WHERE status = 'selesai' AND type != 'transfer'
 		  AND date(created_at) BETWEEN COALESCE(?, `+last30+`) AND COALESCE(?, `+todayExpr+`)`+scope+`
@@ -1282,7 +1291,7 @@ func (a *app) exportCSV(w http.ResponseWriter, r *http.Request) {
 
 func validType(t string) bool {
 	switch t {
-	case "topup", "penjualan", "fee", "lain":
+	case "topup", "penjualan", "fee", "lain", "subscribe":
 		return true
 	}
 	return false

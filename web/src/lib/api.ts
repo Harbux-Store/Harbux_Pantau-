@@ -11,7 +11,7 @@ export type Account = {
 };
 export type Tx = {
   id: number;
-  type: "topup" | "penjualan" | "fee" | "lain" | "transfer";
+  type: "topup" | "penjualan" | "fee" | "lain" | "subscribe" | "transfer";
   account_id: number | null;
   from_account_id: number | null;
   to_account_id: number | null;
@@ -58,12 +58,13 @@ const TYPE_LABEL: Record<string, string> = {
   penjualan: "Penjualan",
   fee: "Fee",
   lain: "Lain",
+  subscribe: "Subscribe akun",
   transfer: "Transfer",
 };
 export const txTypeLabel = (t: string) => TYPE_LABEL[t] || t;
 
 // Arah dana per tipe transaksi: penjualan menambah kas (+),
-// topup/fee/lain mengurangi kas (−), transfer hanya memindah Robux (netral).
+// topup/fee/lain/subscribe mengurangi kas (−), transfer hanya memindah Robux (netral).
 export const txSign = (type: string) => (type === "penjualan" ? 1 : type === "transfer" ? 0 : -1);
 export const signedIdr = (type: string, total: number) => {
   const s = txSign(type);

@@ -7,7 +7,7 @@ import { api, errMsg, idr, nowLocal, rb, signedClass, signedIdr, txSign, type Ac
 
 const empty = { type: "topup", account_id: "", counterpart: "", robux_amount: 0, rate_idr: 0, fee_idr: 0, status: "selesai", note: "", created_at: "" };
 const fresh = () => ({ ...empty, created_at: nowLocal() });
-const TYPE_SHORT: Record<string, string> = { topup: "Topup", penjualan: "Jual", lain: "Lain", fee: "Fee", transfer: "Transfer" };
+const TYPE_SHORT: Record<string, string> = { topup: "Topup", penjualan: "Jual", lain: "Lain", fee: "Fee", subscribe: "Subscribe", transfer: "Transfer" };
 const emptyTransfer = { from_account_id: "", to_account_id: "", robux_amount: 0, note: "" };
 
 export default function TransactionsPage() {
@@ -134,8 +134,10 @@ export default function TransactionsPage() {
   };
 
   const previewTotal = form.robux_amount * form.rate_idr + form.fee_idr;
-  // topup/lain mengurangi dana, penjualan menambah
+  // topup/lain/subscribe mengurangi dana, penjualan menambah
   const previewSign = txSign(form.type);
+  // subscribe = biaya langganan akun, tidak memakai robux & rate
+  const isSubscribe = form.type === "subscribe";
 
   return (
     <div className="space-y-6">
@@ -154,6 +156,7 @@ export default function TransactionsPage() {
               <option value="topup">Topup</option>
               <option value="penjualan">Penjualan</option>
               <option value="lain">Lain</option>
+              <option value="subscribe">Subscribe akun</option>
               <option value="transfer">Transfer</option>
             </select>
             <select value={filter.account_id || ""} onChange={(e) => { const f = { ...filter, account_id: e.target.value }; setFilter(f); load(f); }} className="input sm:w-auto">
@@ -227,12 +230,19 @@ export default function TransactionsPage() {
               <option value="topup">Topup — beli R (modal keluar)</option>
               <option value="penjualan">Penjualan — jual R (pendapatan)</option>
               <option value="lain">Lain / pengeluaran</option>
+              <option value="subscribe">Subscribe akun — langganan (mis. Premium)</option>
             </select>
             <select value={form.account_id} onChange={(e) => setForm({ ...form, account_id: e.target.value })} className="input">
               <option value="">Akun Roblox *</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({rb(a.current_robux)})</option>)}
             </select>
-            <input placeholder="Counterpart (pembeli/penjual)" value={form.counterpart} onChange={(e) => setForm({ ...form, counterpart: e.target.value })} className="input" />
+            <input placeholder={isSubscribe ? "Penyedia langganan (opsional)" : "Counterpart (pembeli/penjual)"} value={form.counterpart} onChange={(e) => setForm({ ...form, counterpart: e.target.value })} className="input" />
+            {isSubscribe ? (
+              <label className="block text-xs text-muted">
+                Biaya langganan (IDR)
+                <NumberInput placeholder="0" value={form.fee_idr} onValue={(n) => setForm({ ...form, fee_idr: n })} className="input mt-1" />
+              </label>
+            ) : (
             <div className="grid grid-cols-2 gap-2">
               <label className="block text-xs text-muted">
                 Jumlah Robux
@@ -243,12 +253,13 @@ export default function TransactionsPage() {
                 <NumberInput placeholder="0" value={form.rate_idr} onValue={(n) => setForm({ ...form, rate_idr: n })} className="input mt-1" />
               </label>
             </div>
+            )}
             <p className="text-xs text-muted">
               {previewSign > 0 ? "Dana masuk" : "Dana keluar"}:{" "}
               <span className={`font-semibold ${previewSign > 0 ? "text-pos" : "text-neg"}`}>
                 {previewSign > 0 ? "+" : "−"}{idr(previewTotal)}
               </span>{" "}
-              (robux × rate)
+              {isSubscribe ? "(biaya langganan)" : "(robux × rate)"}
             </p>
             <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="input">
               <option value="selesai">Selesai</option>
