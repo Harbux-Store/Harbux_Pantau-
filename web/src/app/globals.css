@@ -13,10 +13,11 @@
   --pos: #16a34a;
   --neg: #dc2626;
   --warn: #5f6368;
-  /* warna status stok akun */
+  /* warna status stok akun (ready / pending 5 hari / cooldown 30 hari / borrow) */
   --ready: #16a34a;
   --pending: #ca8a04;
   --borrow: #2563eb;
+  --cooldown: #ea580c;
   color-scheme: light;
 }
 
@@ -34,6 +35,7 @@
     --ready: #4ade80;
     --pending: #facc15;
     --borrow: #60a5fa;
+    --cooldown: #fb923c;
     color-scheme: dark;
   }
 }
@@ -51,6 +53,7 @@
   --ready: #4ade80;
   --pending: #facc15;
   --borrow: #60a5fa;
+  --cooldown: #fb923c;
   color-scheme: dark;
 }
 
@@ -67,6 +70,7 @@
   --color-ready: var(--ready);
   --color-pending: var(--pending);
   --color-borrow: var(--borrow);
+  --color-cooldown: var(--cooldown);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

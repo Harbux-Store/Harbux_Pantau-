@@ -13,15 +13,17 @@ type Form = { username_roblox: string; robux: number; stock_status: Stock };
 const STATUS: Record<Stock, { label: string; tone: string; hint: string; days?: number }> = {
   ready: { label: "Ready", tone: "text-ready", hint: "Siap dijual" },
   pending: { label: "Pending 5 hari", tone: "text-pending", hint: "Menunggu Robux masuk", days: 5 },
-  cooldown: { label: "Pending 30 hari", tone: "text-pending", hint: "Robux sudah terpakai habis", days: 30 },
+  cooldown: { label: "Pending 30 hari", tone: "text-cooldown", hint: "Robux sudah terpakai habis", days: 30 },
   borrow: { label: "Borrow", tone: "text-borrow", hint: "Sedang dipinjam" },
 };
 
-// Teks sisa masa tunggu untuk satu akun.
-const waitText = (a: Account) => {
+// Teks + warna sisa masa tunggu satu akun; hijau bila masa tunggunya sudah lewat.
+const waitInfo = (a: Account) => {
   const d = daysLeft(a.status_until);
-  if (d === null) return "";
-  return d > 0 ? `sisa ${d} hari` : "masa tunggu selesai";
+  if (d === null) return null;
+  return d > 0
+    ? { text: `sisa ${d} hari`, tone: "text-muted" }
+    : { text: "masa tunggu selesai", tone: "text-ready" };
 };
 const STATUS_KEYS = Object.keys(STATUS) as Stock[];
 
@@ -239,7 +241,10 @@ export default function AccountsPage() {
                           <option key={s} value={s} className="text-fg">{STATUS[s].label}</option>
                         ))}
                       </select>
-                      {waitText(a) && <p className="mt-1 text-xs text-muted">{waitText(a)}</p>}
+                      {(() => {
+                        const w = waitInfo(a);
+                        return w && <p className={`mt-1 text-xs ${w.tone}`}>{w.text}</p>;
+                      })()}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-right">
                       <button onClick={() => startEdit(a)} className="link text-base">Edit</button>
