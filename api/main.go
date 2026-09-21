@@ -43,6 +43,7 @@ func schemaFor(mysql bool) []string {
 				initial_balance_robux BIGINT NOT NULL DEFAULT 0,
 				active TINYINT NOT NULL DEFAULT 1,
 				stock_status VARCHAR(16) NOT NULL DEFAULT 'ready',
+				status_since VARCHAR(16) NOT NULL DEFAULT '',
 				user_id INT NULL,
 				INDEX idx_accounts_user (user_id)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -110,7 +111,7 @@ const balanceExpr = `CASE
 	WHEN t.type = 'transfer' AND t.from_account_id = a.id THEN -t.robux_amount
 	ELSE 0 END`
 
-const accountSelect = `SELECT a.id, a.name, a.username_roblox, a.owner, a.initial_balance_robux, a.active, a.stock_status,
+const accountSelect = `SELECT a.id, a.name, a.username_roblox, a.owner, a.initial_balance_robux, a.active, a.stock_status, a.status_since,
 	a.initial_balance_robux + CAST(COALESCE((SELECT SUM(` + balanceExpr + `)
 		FROM transactions t WHERE t.status = 'selesai'
 		AND (t.account_id = a.id OR t.from_account_id = a.id OR t.to_account_id = a.id)), 0) AS SIGNED) AS bal
@@ -141,6 +142,7 @@ func migrate(db *sql.DB, mysql bool) error {
 		"active":       "ALTER TABLE accounts ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
 		"user_id":      "ALTER TABLE accounts ADD COLUMN user_id INTEGER",
 		"stock_status": "ALTER TABLE accounts ADD COLUMN stock_status TEXT NOT NULL DEFAULT 'ready'",
+		"status_since": "ALTER TABLE accounts ADD COLUMN status_since TEXT NOT NULL DEFAULT ''",
 	} {
 		if !hasColumn(db, mysql, "accounts", col) {
 			if _, err := db.Exec(ddl); err != nil {
@@ -200,14 +202,15 @@ func scanAccounts(rows *sql.Rows) []map[string]any {
 	for rows.Next() {
 		var ac account
 		var active, bal int64
-		var stock string
-		if err := rows.Scan(&ac.ID, &ac.Name, &ac.UsernameRoblox, &ac.Owner, &ac.InitialBalanceRobux, &active, &stock, &bal); err != nil {
+		var stock, since string
+		if err := rows.Scan(&ac.ID, &ac.Name, &ac.UsernameRoblox, &ac.Owner, &ac.InitialBalanceRobux, &active, &stock, &since, &bal); err != nil {
 			continue
 		}
 		out = append(out, map[string]any{
 			"id": ac.ID, "name": ac.Name, "username_roblox": ac.UsernameRoblox,
 			"owner": ac.Owner, "initial_balance_robux": ac.InitialBalanceRobux,
-			"active": active == 1, "stock_status": stock, "current_robux": bal,
+			"active": active == 1, "stock_status": stock, "status_since": since,
+			"status_until": stockUntil(stock, since), "current_robux": bal,
 		})
 	}
 	return out
@@ -728,8 +731,26 @@ type accountReq struct {
 	StockStatus         string `json:"stock_status"`
 }
 
+// Dua jenis pending dengan masa tunggu berbeda:
+// pending  = menunggu Robux masuk ke akun (5 hari),
+// cooldown = akun baru habis dipakai, tunggu bisa dipakai lagi (30 hari).
+var stockWaitDays = map[string]int{"pending": 5, "cooldown": 30}
+
 func validStockStatus(s string) bool {
-	return s == "ready" || s == "pending" || s == "borrow"
+	return s == "ready" || s == "pending" || s == "cooldown" || s == "borrow"
+}
+
+// stockUntil mengembalikan kapan masa tunggu berakhir ("" bila status tanpa masa tunggu).
+func stockUntil(stock, since string) any {
+	days, ok := stockWaitDays[stock]
+	if !ok || since == "" {
+		return nil
+	}
+	t, err := time.ParseInLocation(timeLayout, since, time.Local)
+	if err != nil {
+		return nil
+	}
+	return t.AddDate(0, 0, days).Format(timeLayout)
 }
 
 // normalizeAccount: nama akun opsional — kalau kosong pakai username Roblox.
@@ -749,7 +770,7 @@ func (req *accountReq) normalize() string {
 		req.StockStatus = "ready"
 	}
 	if !validStockStatus(req.StockStatus) {
-		return "status tidak valid (borrow/pending/ready)"
+		return "status tidak valid (ready/pending/cooldown/borrow)"
 	}
 	return ""
 }
@@ -763,8 +784,9 @@ func (a *app) createAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
-	res, err := a.db.Exec("INSERT INTO accounts (name, username_roblox, owner, initial_balance_robux, stock_status, user_id) VALUES (?, ?, ?, ?, ?, ?)",
-		req.Name, req.UsernameRoblox, req.Owner, req.InitialBalanceRobux, req.StockStatus, currentUser(r).ID)
+	res, err := a.db.Exec("INSERT INTO accounts (name, username_roblox, owner, initial_balance_robux, stock_status, status_since, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		req.Name, req.UsernameRoblox, req.Owner, req.InitialBalanceRobux, req.StockStatus,
+		time.Now().Format(timeLayout), currentUser(r).ID)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -790,8 +812,13 @@ func (a *app) updateAccount(w http.ResponseWriter, r *http.Request) {
 			active = 1
 		}
 	}
-	res, err := a.db.Exec("UPDATE accounts SET name=?, username_roblox=?, owner=?, initial_balance_robux=?, stock_status=?, active=COALESCE(?, active) WHERE id=? AND "+accScope(currentUser(r), ""),
-		req.Name, req.UsernameRoblox, req.Owner, req.InitialBalanceRobux, req.StockStatus, active, id)
+	// status_since hanya di-reset saat status stok benar-benar berubah,
+	// supaya hitungan masa tunggu tidak mundur tiap kali akun diedit.
+	res, err := a.db.Exec(`UPDATE accounts SET name=?, username_roblox=?, owner=?, initial_balance_robux=?,
+		status_since = CASE WHEN stock_status = ? THEN status_since ELSE ? END,
+		stock_status=?, active=COALESCE(?, active) WHERE id=? AND `+accScope(currentUser(r), ""),
+		req.Name, req.UsernameRoblox, req.Owner, req.InitialBalanceRobux,
+		req.StockStatus, time.Now().Format(timeLayout), req.StockStatus, active, id)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -1015,7 +1042,7 @@ func (a *app) createTransaction(w http.ResponseWriter, r *http.Request) {
 // currentBalance menghitung saldo R$ akun; transaksi dengan id excludeID diabaikan.
 func (a *app) currentBalance(accountID, excludeID int64) (int64, error) {
 	var bal int64
-	err := a.db.QueryRow(accountSelect+" WHERE a.id = ?", accountID).Scan(new(int64), new(string), new(string), new(string), new(int64), new(int64), new(string), &bal)
+	err := a.db.QueryRow(accountSelect+" WHERE a.id = ?", accountID).Scan(new(int64), new(string), new(string), new(string), new(int64), new(int64), new(string), new(string), &bal)
 	if err != nil || excludeID == 0 {
 		return bal, err
 	}

@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS accounts (
 	initial_balance_robux INTEGER NOT NULL DEFAULT 0,
 	active INTEGER NOT NULL DEFAULT 1,
 	stock_status TEXT NOT NULL DEFAULT 'ready',
+	-- kapan stock_status terakhir diubah, dasar hitungan masa tunggu pending/cooldown
+	status_since TEXT NOT NULL DEFAULT '',
 	user_id INTEGER
 );
 

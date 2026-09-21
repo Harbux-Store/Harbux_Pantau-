@@ -7,7 +7,17 @@ export type Account = {
   initial_balance_robux: number;
   current_robux: number;
   active: boolean;
-  stock_status: "ready" | "pending" | "borrow";
+  stock_status: "ready" | "pending" | "cooldown" | "borrow";
+  status_since: string;
+  status_until: string | null;
+};
+
+// Sisa hari masa tunggu status stok akun; null bila status tanpa masa tunggu.
+export const daysLeft = (until: string | null) => {
+  if (!until) return null;
+  const end = new Date(until.replace(" ", "T")).getTime();
+  if (Number.isNaN(end)) return null;
+  return Math.ceil((end - Date.now()) / 86_400_000);
 };
 export type Tx = {
   id: number;

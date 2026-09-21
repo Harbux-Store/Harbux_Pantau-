@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS accounts (
 	initial_balance_robux BIGINT NOT NULL DEFAULT 0,
 	active TINYINT NOT NULL DEFAULT 1,
 	stock_status VARCHAR(16) NOT NULL DEFAULT 'ready',
+	-- kapan stock_status terakhir diubah, dasar hitungan masa tunggu pending/cooldown
+	status_since VARCHAR(16) NOT NULL DEFAULT '',
 	user_id INT NULL,
 	INDEX idx_accounts_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
