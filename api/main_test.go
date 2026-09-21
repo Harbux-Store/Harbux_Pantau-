@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 	"testing"
 )
 
@@ -349,5 +350,105 @@ func TestLoginRateLimit(t *testing.T) {
 	// percobaan berikutnya diblokir, bahkan dengan password benar
 	if code, _ := req(t, "POST", url+"/auth/login", "", map[string]string{"username": "admin", "password": "rahasia123"}); code != 429 {
 		t.Fatalf("percobaan ke-%d harus diblokir (429), dapat %d", maxLoginFail+1, code)
+	}
+}
+
+// reqList sama seperti req tapi untuk endpoint yang mengembalikan array JSON.
+func reqList(t *testing.T, method, url, token string, body any) (int, []map[string]any) {
+	t.Helper()
+	var buf io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		buf = bytes.NewReader(b)
+	}
+	r, _ := http.NewRequest(method, url, buf)
+	r.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		r.AddCookie(&http.Cookie{Name: "token", Value: token})
+	}
+	res, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	data := []map[string]any{}
+	json.NewDecoder(res.Body).Decode(&data)
+	return res.StatusCode, data
+}
+
+// Subscribe = biaya langganan akun: masuk hitungan biaya, tidak mengubah saldo R$.
+func TestSubscribeTransaction(t *testing.T) {
+	_, url := newTestApp(t)
+	req(t, "POST", url+"/auth/register", "", map[string]string{"username": "admin", "password": "rahasia123"})
+	token := login(t, url, "admin", "rahasia123")
+
+	_, d := req(t, "POST", url+"/api/accounts", token, map[string]any{"name": "AkunA", "initial_balance_robux": 1000})
+	acc := int64(d["id"].(float64))
+
+	// tanpa biaya harus ditolak
+	if code, _ := req(t, "POST", url+"/api/transactions", token, map[string]any{
+		"type": "subscribe", "account_id": acc}); code != 400 {
+		t.Fatalf("subscribe tanpa biaya harus ditolak, dapat %d", code)
+	}
+	// robux/rate diabaikan, hanya biaya yang dicatat
+	code, d := req(t, "POST", url+"/api/transactions", token, map[string]any{
+		"type": "subscribe", "account_id": acc, "robux_amount": 500, "rate_idr": 40, "fee_idr": 75000})
+	if code != 201 {
+		t.Fatalf("subscribe: %d %v", code, d)
+	}
+	if total := int64(d["idr_total"].(float64)); total != 75000 {
+		t.Fatalf("idr_total subscribe harus 75000, dapat %d", total)
+	}
+	_, accs := reqList(t, "GET", url+"/api/accounts", token, nil)
+	if bal := int64(accs[0]["current_robux"].(float64)); bal != 1000 {
+		t.Fatalf("subscribe tidak boleh mengubah saldo, dapat %d", bal)
+	}
+	_, sum := req(t, "GET", url+"/api/summary", token, nil)
+	if exp := int64(sum["expenses"].(float64)); exp != 75000 {
+		t.Fatalf("subscribe harus masuk biaya, dapat %d", exp)
+	}
+}
+
+// Dua jenis pending punya masa tunggu berbeda (5 dan 30 hari) dihitung dari status_since.
+func TestStockStatusWait(t *testing.T) {
+	_, url := newTestApp(t)
+	req(t, "POST", url+"/auth/register", "", map[string]string{"username": "admin", "password": "rahasia123"})
+	token := login(t, url, "admin", "rahasia123")
+
+	_, d := req(t, "POST", url+"/api/accounts", token, map[string]any{"name": "AkunA", "stock_status": "pending"})
+	acc := int64(d["id"].(float64))
+
+	check := func(want string, days int) {
+		t.Helper()
+		_, accs := reqList(t, "GET", url+"/api/accounts", token, nil)
+		if got := accs[0]["stock_status"].(string); got != want {
+			t.Fatalf("stock_status %q, ingin %q", got, want)
+		}
+		since, _ := time.ParseInLocation(timeLayout, accs[0]["status_since"].(string), time.Local)
+		until, _ := time.ParseInLocation(timeLayout, accs[0]["status_until"].(string), time.Local)
+		if d := int(until.Sub(since).Hours() / 24); d != days {
+			t.Fatalf("masa tunggu %s = %d hari, ingin %d", want, d, days)
+		}
+	}
+	check("pending", 5)
+
+	put := func(status string) (int, map[string]any) {
+		return req(t, "PUT", url+"/api/accounts/"+strconv.FormatInt(acc, 10), token,
+			map[string]any{"name": "AkunA", "stock_status": status})
+	}
+	if code, d := put("cooldown"); code != 200 {
+		t.Fatalf("ubah ke cooldown: %d %v", code, d)
+	}
+	check("cooldown", 30)
+
+	if code, _ := put("ready"); code != 200 {
+		t.Fatalf("ubah ke ready gagal")
+	}
+	_, accs := reqList(t, "GET", url+"/api/accounts", token, nil)
+	if accs[0]["status_until"] != nil {
+		t.Fatalf("status ready tidak punya masa tunggu, dapat %v", accs[0]["status_until"])
+	}
+	if code, _ := put("entahlah"); code != 400 {
+		t.Fatalf("status stok ngawur harus ditolak")
 	}
 }

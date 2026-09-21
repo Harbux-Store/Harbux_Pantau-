@@ -3,15 +3,27 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import NumberInput from "@/components/NumberInput";
-import { api, errMsg, rb, type Account } from "@/lib/api";
+import { api, daysLeft, errMsg, rb, type Account } from "@/lib/api";
 
 type Stock = Account["stock_status"];
 type Form = { username_roblox: string; robux: number; stock_status: Stock };
 
-const STATUS: Record<Stock, { label: string; tone: string; hint: string }> = {
+// Dua jenis pending: menunggu Robux masuk (5 hari) dan masa tunggu setelah
+// Robux akun terpakai habis (30 hari). Masa tunggu dihitung dari status_until.
+const STATUS: Record<Stock, { label: string; tone: string; hint: string; days?: number }> = {
   ready: { label: "Ready", tone: "text-ready", hint: "Siap dijual" },
-  pending: { label: "Pending", tone: "text-pending", hint: "Robux belum masuk / tertahan" },
+  pending: { label: "Pending 5 hari", tone: "text-pending", hint: "Menunggu Robux masuk", days: 5 },
+  cooldown: { label: "Pending 30 hari", tone: "text-cooldown", hint: "Robux sudah terpakai habis", days: 30 },
   borrow: { label: "Borrow", tone: "text-borrow", hint: "Sedang dipinjam" },
+};
+
+// Teks + warna sisa masa tunggu satu akun; hijau bila masa tunggunya sudah lewat.
+const waitInfo = (a: Account) => {
+  const d = daysLeft(a.status_until);
+  if (d === null) return null;
+  return d > 0
+    ? { text: `sisa ${d} hari`, tone: "text-muted" }
+    : { text: "masa tunggu selesai", tone: "text-ready" };
 };
 const STATUS_KEYS = Object.keys(STATUS) as Stock[];
 
@@ -47,7 +59,7 @@ function AccountFields({ form, setForm }: { form: Form; setForm: (f: Form) => vo
 
       <div className="space-y-2">
         <span className="text-sm font-medium">Status</span>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {STATUS_KEYS.map((s) => (
             <button
               key={s}
@@ -61,7 +73,10 @@ function AccountFields({ form, setForm }: { form: Form; setForm: (f: Form) => vo
             </button>
           ))}
         </div>
-        <p className="text-sm text-muted">{STATUS[form.stock_status].hint}</p>
+        <p className="text-sm text-muted">
+          {STATUS[form.stock_status].hint}
+          {STATUS[form.stock_status].days ? ` · masa tunggu ${STATUS[form.stock_status].days} hari` : ""}
+        </p>
       </div>
     </>
   );
@@ -166,7 +181,7 @@ export default function AccountsPage() {
   return (
     <div className="space-y-8">
       {/* ringkasan stok */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <div className="card p-6">
           <p className="text-sm text-muted">Total Robux</p>
           <p className="mt-2 text-3xl font-semibold tracking-tight">{rb(total)}</p>
@@ -177,6 +192,7 @@ export default function AccountsPage() {
             <p className={`badge text-sm ${STATUS[s].tone}`}>{STATUS[s].label}</p>
             <p className="mt-2 text-3xl font-semibold tracking-tight">{rb(robuxOf(s))}</p>
             <p className="mt-1 text-sm text-muted">{count(s)} akun · {STATUS[s].hint}</p>
+            {STATUS[s].days && <p className="text-sm text-muted">Masa tunggu {STATUS[s].days} hari</p>}
           </div>
         ))}
       </div>
@@ -219,12 +235,16 @@ export default function AccountsPage() {
                       <select
                         value={a.stock_status}
                         onChange={(e) => changeStatus(a, e.target.value as Stock)}
-                        className={`input h-10 w-36 text-base font-medium ${STATUS[a.stock_status].tone}`}
+                        className={`input h-10 w-40 text-base font-medium ${STATUS[a.stock_status].tone}`}
                       >
                         {STATUS_KEYS.map((s) => (
                           <option key={s} value={s} className="text-fg">{STATUS[s].label}</option>
                         ))}
                       </select>
+                      {(() => {
+                        const w = waitInfo(a);
+                        return w && <p className={`mt-1 text-xs ${w.tone}`}>{w.text}</p>;
+                      })()}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-right">
                       <button onClick={() => startEdit(a)} className="link text-base">Edit</button>

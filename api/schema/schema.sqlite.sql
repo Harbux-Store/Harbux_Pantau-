@@ -25,12 +25,14 @@ CREATE TABLE IF NOT EXISTS accounts (
 	initial_balance_robux INTEGER NOT NULL DEFAULT 0,
 	active INTEGER NOT NULL DEFAULT 1,
 	stock_status TEXT NOT NULL DEFAULT 'ready',
+	-- kapan stock_status terakhir diubah, dasar hitungan masa tunggu pending/cooldown
+	status_since TEXT NOT NULL DEFAULT '',
 	user_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts (user_id);
 
--- type: 'topup' | 'penjualan' | 'transfer' | lainnya (fee/biaya).
+-- type: 'topup' | 'penjualan' | 'transfer' | 'subscribe' (langganan akun) | lainnya (fee/biaya).
 -- status: 'selesai' | 'pending' | 'dibatalkan'; hanya 'selesai' yang dihitung ke saldo.
 -- created_at: teks "YYYY-MM-DD HH:MM" (16 karakter).
 -- account_id dipakai topup/penjualan; from_account_id & to_account_id dipakai transfer.

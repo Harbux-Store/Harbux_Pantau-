@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, errMsg, idr, LOW_BALANCE, rb, txTypeLabel, today, type Summary, type Tx } from "@/lib/api";
+import { api, errMsg, idr, LOW_BALANCE, rb, signedClass, signedIdr, txTypeLabel, today, type Summary, type Tx } from "@/lib/api";
 
-function Card({ label, value, sub, tone = "text-fg" }: { label: string; value: string; sub?: string; tone?: string }) {
+// accent: warna aksen kartu (garis atas + gradasi tipis), lihat .stat di globals.css
+function Card({ label, value, sub, tone = "text-fg", accent = "var(--muted)" }: {
+  label: string; value: string; sub?: string; tone?: string; accent?: string;
+}) {
   return (
-    <div className="card p-5">
+    <div className="stat" style={{ "--accent": accent } as React.CSSProperties}>
       <p className="text-xs text-muted">{label}</p>
       <p className={`mt-2 text-2xl font-semibold tracking-tight ${tone}`}>{value}</p>
       {sub && <p className="mt-0.5 text-xs text-muted">{sub}</p>}
@@ -195,14 +198,14 @@ export default function DashboardPage() {
       )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Card label="Profit hari ini" value={idr(todaySum.profit)} sub={`${todaySum.sales_count} penjualan · ${rb(todaySum.robux_sold)}`} tone={todaySum.profit >= 0 ? "text-pos" : "text-neg"} />
-        <Card label="Profit 30 hari" value={idr(month.profit)} sub={`Penjualan ${idr(month.income)}`} tone={month.profit >= 0 ? "text-pos" : "text-neg"} />
-        <Card label="Profit (semua)" value={idr(summary.profit)} sub={`Pendapatan ${idr(summary.income)}`} tone={summary.profit >= 0 ? "text-pos" : "text-neg"} />
-        <Card label="Stok R semua akun" value={rb(summary.accounts.reduce((a, c) => a + c.current_robux, 0))} sub={`${summary.accounts.length} akun aktif`} />
-        <Card label="Harga beli rata-rata" value={rate(summary.avg_buy_rate)} sub={`Total topup ${idr(summary.topup_spent)}`} />
-        <Card label="Harga jual rata-rata" value={rate(summary.avg_sell_rate)} sub={`${rb(summary.robux_sold)} terjual`} />
-        <Card label="Margin per R" value={summary.robux_sold ? rate(margin) : "—"} sub={summary.robux_sold ? "Harga jual − harga beli rata-rata" : "Belum ada penjualan"} />
-        <Card label="HPP + biaya" value={idr(summary.cost)} sub={`HPP ${idr(summary.cogs)} · biaya ${idr(summary.expenses)}`} />
+        <Card label="Profit hari ini" value={idr(todaySum.profit)} sub={`${todaySum.sales_count} penjualan · ${rb(todaySum.robux_sold)}`} tone={todaySum.profit >= 0 ? "text-pos" : "text-neg"} accent={todaySum.profit >= 0 ? "var(--pos)" : "var(--neg)"} />
+        <Card label="Profit 30 hari" value={idr(month.profit)} sub={`Penjualan ${idr(month.income)}`} tone={month.profit >= 0 ? "text-pos" : "text-neg"} accent={month.profit >= 0 ? "var(--pos)" : "var(--neg)"} />
+        <Card label="Profit (semua)" value={idr(summary.profit)} sub={`Pendapatan ${idr(summary.income)}`} tone={summary.profit >= 0 ? "text-pos" : "text-neg"} accent={summary.profit >= 0 ? "var(--pos)" : "var(--neg)"} />
+        <Card label="Stok R semua akun" value={rb(summary.accounts.reduce((a, c) => a + c.current_robux, 0))} sub={`${summary.accounts.length} akun aktif`} accent="var(--borrow)" />
+        <Card label="Harga beli rata-rata" value={rate(summary.avg_buy_rate)} sub={`Total topup ${idr(summary.topup_spent)}`} accent="var(--neg)" />
+        <Card label="Harga jual rata-rata" value={rate(summary.avg_sell_rate)} sub={`${rb(summary.robux_sold)} terjual`} accent="var(--pos)" />
+        <Card label="Margin per R" value={summary.robux_sold ? rate(margin) : "—"} sub={summary.robux_sold ? "Harga jual − harga beli rata-rata" : "Belum ada penjualan"} tone={margin >= 0 ? "text-pos" : "text-neg"} accent={margin >= 0 ? "var(--pos)" : "var(--neg)"} />
+        <Card label="HPP + biaya" value={idr(summary.cost)} sub={`HPP ${idr(summary.cogs)} · biaya ${idr(summary.expenses)}`} accent="var(--pending)" />
       </div>
 
       <section>
@@ -251,7 +254,7 @@ export default function DashboardPage() {
                   <td className="px-4 py-2.5">{txTypeLabel(t.type)}</td>
                   <td className="px-4 py-2.5">{t.account_name || "—"}</td>
                   <td className="px-4 py-2.5 text-right">{t.robux_amount ? rb(t.robux_amount) : "—"}</td>
-                  <td className="px-4 py-2.5 text-right">{t.idr_total ? idr(t.idr_total) : "—"}</td>
+                  <td className={`px-4 py-2.5 text-right tabular-nums ${signedClass(t.type, t.idr_total)}`}>{signedIdr(t.type, t.idr_total)}</td>
                   <td className="px-4 py-2.5">
                     <span className={`badge ${
                       t.status === "selesai" ? "text-pos" : t.status === "pending" ? "text-warn" : "text-muted"

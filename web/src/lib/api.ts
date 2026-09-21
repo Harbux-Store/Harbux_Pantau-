@@ -7,11 +7,21 @@ export type Account = {
   initial_balance_robux: number;
   current_robux: number;
   active: boolean;
-  stock_status: "ready" | "pending" | "borrow";
+  stock_status: "ready" | "pending" | "cooldown" | "borrow";
+  status_since: string;
+  status_until: string | null;
+};
+
+// Sisa hari masa tunggu status stok akun; null bila status tanpa masa tunggu.
+export const daysLeft = (until: string | null) => {
+  if (!until) return null;
+  const end = new Date(until.replace(" ", "T")).getTime();
+  if (Number.isNaN(end)) return null;
+  return Math.ceil((end - Date.now()) / 86_400_000);
 };
 export type Tx = {
   id: number;
-  type: "topup" | "penjualan" | "fee" | "lain" | "transfer";
+  type: "topup" | "penjualan" | "fee" | "lain" | "subscribe" | "transfer";
   account_id: number | null;
   from_account_id: number | null;
   to_account_id: number | null;
@@ -58,9 +68,24 @@ const TYPE_LABEL: Record<string, string> = {
   penjualan: "Penjualan",
   fee: "Fee",
   lain: "Lain",
+  subscribe: "Subscribe akun",
   transfer: "Transfer",
 };
 export const txTypeLabel = (t: string) => TYPE_LABEL[t] || t;
+
+// Arah dana per tipe transaksi: penjualan menambah kas (+),
+// topup/fee/lain/subscribe mengurangi kas (−), transfer hanya memindah Robux (netral).
+export const txSign = (type: string) => (type === "penjualan" ? 1 : type === "transfer" ? 0 : -1);
+export const signedIdr = (type: string, total: number) => {
+  const s = txSign(type);
+  if (!total || s === 0) return "—";
+  return `${s > 0 ? "+" : "−"}${idr(Math.abs(total))}`;
+};
+export const signedClass = (type: string, total: number) => {
+  const s = txSign(type);
+  if (!total || s === 0) return "text-muted";
+  return s > 0 ? "text-pos" : "text-neg";
+};
 // Pakai waktu lokal (WIB), bukan UTC — toISOString() membuat tanggal mundur sebelum jam 07:00.
 const pad = (n: number) => String(n).padStart(2, "0");
 export const today = () => {

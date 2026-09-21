@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import NumberInput from "@/components/NumberInput";
-import { api, errMsg, idr, nowLocal, rb, type Account, type Tx } from "@/lib/api";
+import { api, errMsg, idr, nowLocal, rb, signedClass, signedIdr, txSign, type Account, type Tx } from "@/lib/api";
 
 const empty = { type: "topup", account_id: "", counterpart: "", robux_amount: 0, rate_idr: 0, fee_idr: 0, status: "selesai", note: "", created_at: "" };
 const fresh = () => ({ ...empty, created_at: nowLocal() });
-const TYPE_SHORT: Record<string, string> = { topup: "Topup", penjualan: "Jual", lain: "Lain", fee: "Fee", transfer: "Transfer" };
+const TYPE_SHORT: Record<string, string> = { topup: "Topup", penjualan: "Jual", lain: "Lain", fee: "Fee", subscribe: "Subscribe", transfer: "Transfer" };
 const emptyTransfer = { from_account_id: "", to_account_id: "", robux_amount: 0, note: "" };
 
 export default function TransactionsPage() {
@@ -134,6 +134,10 @@ export default function TransactionsPage() {
   };
 
   const previewTotal = form.robux_amount * form.rate_idr + form.fee_idr;
+  // topup/lain/subscribe mengurangi dana, penjualan menambah
+  const previewSign = txSign(form.type);
+  // subscribe = biaya langganan akun, tidak memakai robux & rate
+  const isSubscribe = form.type === "subscribe";
 
   return (
     <div className="space-y-6">
@@ -152,6 +156,7 @@ export default function TransactionsPage() {
               <option value="topup">Topup</option>
               <option value="penjualan">Penjualan</option>
               <option value="lain">Lain</option>
+              <option value="subscribe">Subscribe akun</option>
               <option value="transfer">Transfer</option>
             </select>
             <select value={filter.account_id || ""} onChange={(e) => { const f = { ...filter, account_id: e.target.value }; setFilter(f); load(f); }} className="input sm:w-auto">
@@ -177,7 +182,7 @@ export default function TransactionsPage() {
                   <th className="px-5 py-3">Tipe</th>
                   <th className="px-5 py-3">Akun</th>
                   <th className="px-5 py-3 text-right">Robux</th>
-                  <th className="px-5 py-3 text-right">IDR</th>
+                  <th className="px-5 py-3 text-right">Dana (IDR)</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3"></th>
                 </tr>
@@ -202,7 +207,7 @@ export default function TransactionsPage() {
                         {t.counterpart && <p className="truncate text-xs text-muted">{t.counterpart}</p>}
                       </td>
                       <td className="px-5 py-3.5 text-right font-medium tabular-nums">{t.robux_amount ? rb(t.robux_amount) : "—"}</td>
-                      <td className="px-5 py-3.5 text-right tabular-nums">{t.idr_total ? idr(t.idr_total) : "—"}</td>
+                      <td className={`px-5 py-3.5 text-right font-medium tabular-nums ${signedClass(t.type, t.idr_total)}`}>{signedIdr(t.type, t.idr_total)}</td>
                       <td className="px-5 py-3.5">
                         <span className={`badge capitalize ${
                           t.status === "selesai" ? "text-ready" : t.status === "pending" ? "text-pending" : "text-muted"
@@ -225,17 +230,37 @@ export default function TransactionsPage() {
               <option value="topup">Topup — beli R (modal keluar)</option>
               <option value="penjualan">Penjualan — jual R (pendapatan)</option>
               <option value="lain">Lain / pengeluaran</option>
+              <option value="subscribe">Subscribe akun — langganan (mis. Premium)</option>
             </select>
             <select value={form.account_id} onChange={(e) => setForm({ ...form, account_id: e.target.value })} className="input">
               <option value="">Akun Roblox *</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({rb(a.current_robux)})</option>)}
             </select>
-            <input placeholder="Counterpart (pembeli/penjual)" value={form.counterpart} onChange={(e) => setForm({ ...form, counterpart: e.target.value })} className="input" />
+            <input placeholder={isSubscribe ? "Penyedia langganan (opsional)" : "Counterpart (pembeli/penjual)"} value={form.counterpart} onChange={(e) => setForm({ ...form, counterpart: e.target.value })} className="input" />
+            {isSubscribe ? (
+              <label className="block text-xs text-muted">
+                Biaya langganan (IDR)
+                <NumberInput placeholder="0" value={form.fee_idr} onValue={(n) => setForm({ ...form, fee_idr: n })} className="input mt-1" />
+              </label>
+            ) : (
             <div className="grid grid-cols-2 gap-2">
-              <NumberInput placeholder="Robux" value={form.robux_amount} onValue={(n) => setForm({ ...form, robux_amount: n })} className="input" />
-              <NumberInput placeholder="Rate" value={form.rate_idr} onValue={(n) => setForm({ ...form, rate_idr: n })} className="input" />
+              <label className="block text-xs text-muted">
+                Jumlah Robux
+                <NumberInput placeholder="0" value={form.robux_amount} onValue={(n) => setForm({ ...form, robux_amount: n })} className="input mt-1" />
+              </label>
+              <label className="block text-xs text-muted">
+                Rate per R (IDR)
+                <NumberInput placeholder="0" value={form.rate_idr} onValue={(n) => setForm({ ...form, rate_idr: n })} className="input mt-1" />
+              </label>
             </div>
-            <p className="text-xs text-muted">Total IDR: <span className="font-semibold text-fg">{idr(previewTotal)}</span> (robux × rate)</p>
+            )}
+            <p className="text-xs text-muted">
+              {previewSign > 0 ? "Dana masuk" : "Dana keluar"}:{" "}
+              <span className={`font-semibold ${previewSign > 0 ? "text-pos" : "text-neg"}`}>
+                {previewSign > 0 ? "+" : "−"}{idr(previewTotal)}
+              </span>{" "}
+              {isSubscribe ? "(biaya langganan)" : "(robux × rate)"}
+            </p>
             <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="input">
               <option value="selesai">Selesai</option>
               <option value="pending">Pending</option>
@@ -285,7 +310,10 @@ export default function TransactionsPage() {
               <option value="">Ke akun *</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
-            <NumberInput placeholder="Jumlah (R)" value={transfer.robux_amount} onValue={(n) => setTransfer({ ...transfer, robux_amount: n })} className="input" />
+            <label className="block text-xs text-muted">
+              Jumlah Robux
+              <NumberInput placeholder="0" value={transfer.robux_amount} onValue={(n) => setTransfer({ ...transfer, robux_amount: n })} className="input mt-1" />
+            </label>
             <input placeholder="Catatan" value={transfer.note} onChange={(e) => setTransfer({ ...transfer, note: e.target.value })} className="input" />
             {error && <p className="text-sm text-neg">{error}</p>}
             <button disabled={transferBusy} className="btn-primary w-full">
