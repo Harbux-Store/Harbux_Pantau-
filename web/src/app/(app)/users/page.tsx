@@ -128,7 +128,7 @@ export default function UsersPage() {
             ))}
           </div>
           <p className="text-sm text-muted">
-            {role === "admin" ? "Bisa melihat semua data & mengelola pengguna" : "Hanya mengelola akun & transaksi miliknya"}
+            {role === "admin" ? "Bisa mengelola pengguna; datanya tetap terpisah" : "Hanya mengelola akun & transaksi miliknya"}
           </p>
         </div>
         {error && <p className="text-sm text-neg">{error}</p>}
